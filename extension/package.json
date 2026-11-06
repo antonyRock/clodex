@@ -1,0 +1,103 @@
+{
+  "name": "clodex",
+  "displayName": "Clodex",
+  "description": "Чаты Claude Code и Codex в одном списке: поиск по тексту, непрочитанные, фильтры.",
+  "version": "0.4.0",
+  "publisher": "clodex",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "clodex",
+          "title": "Clodex",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "clodex": [
+        {
+          "type": "webview",
+          "id": "clodex.chats",
+          "name": "Чаты"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Clodex",
+      "properties": {
+        "clodex.registryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Путь к реестру проектов (таблица с колонкой «Признаки») для автоматических групп. Пусто — ~/Claude_AI/03_Проекты/00_Реестр проектов.md; файла нет — автогрупп нет."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "clodex.newChat",
+        "title": "Clodex: Новый чат",
+        "icon": "$(add)"
+      },
+      {
+        "command": "clodex.refresh",
+        "title": "Clodex: Обновить список",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "clodex.markAllRead",
+        "title": "Clodex: Отметить все прочитанными",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "clodex.focusSearch",
+        "title": "Clodex: Поиск по чатам"
+      },
+      {
+        "command": "clodex.expandAll",
+        "title": "Clodex: Раскрыть все группы",
+        "icon": "$(expand-all)"
+      },
+      {
+        "command": "clodex.collapseAll",
+        "title": "Clodex: Свернуть все группы",
+        "icon": "$(collapse-all)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "clodex.newChat",
+          "when": "view == clodex.chats",
+          "group": "navigation@0"
+        },
+        {
+          "command": "clodex.markAllRead",
+          "when": "view == clodex.chats",
+          "group": "navigation@1"
+        },
+        {
+          "command": "clodex.refresh",
+          "when": "view == clodex.chats",
+          "group": "navigation@2"
+        }
+      ]
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/antonyRock/clodex"
+  }
+}
