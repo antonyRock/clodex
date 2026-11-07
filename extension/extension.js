@@ -23,6 +23,7 @@ async function migrate(context) {
 }
 
 let log = { info() {}, error() {} };
+const AGENT_EXT = { claude: 'anthropic.claude-code', codex: 'openai.chatgpt' };
 
 async function activate(context) {
   log = vscode.window.createOutputChannel('Clodex', { log: true });
@@ -44,6 +45,8 @@ async function activate(context) {
       provider.post({ type: 'focusSearch' });
     }),
   );
+  // Агента установили или удалили — обновить кнопки панели без перезапуска.
+  context.subscriptions.push(vscode.extensions.onDidChange(() => { provider._icons = null; provider.push(); }));
   provider.start();
   log.info('Clodex запущен');
 }
@@ -95,7 +98,8 @@ class ClodexView {
     };
     tick();
     this.ctx.subscriptions.push({ dispose: () => clearTimeout(this.timer) });
-    this.ctx.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs(() => this.markActiveTabs()));
+    this.ctx.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs(() => { this.markActiveTabs(); this.postCurrent(); }));
+    this.ctx.subscriptions.push(vscode.window.tabGroups.onDidChangeTabGroups(() => this.postCurrent()));
     this.ctx.subscriptions.push(vscode.window.onDidChangeWindowState(() => this.markActiveTabs()));
     this.ctx.subscriptions.push(vscode.window.onDidChangeActiveColorTheme(() => this.postTheme()));
     this.cacheTimer = setInterval(() => this.saveCache(), 30000);
@@ -130,6 +134,16 @@ class ClodexView {
     for (const c of this.chats) s[c.key] = Date.now();
     await this.ctx.globalState.update('seen', s);
     await this.ctx.globalState.update('initialized', true);
+  }
+
+  // Подсветка «текущего чата» = активная вкладка Claude Code. Вкладка не Claude (файл, Codex) — подсветку не трогаем.
+  postCurrent(force) {
+    const g = vscode.window.tabGroups.activeTabGroup;
+    const t = g && g.activeTab;
+    if (!t || !(t.input instanceof vscode.TabInputWebview) || !t.input.viewType.includes('claudeVSCodePanel')) return;
+    const c = (this.chats || []).filter((x) => x.agent === 'claude' && x.title === t.label)
+      .sort((a, b) => (b.mtime || 0) - (a.mtime || 0))[0];
+    if (c && (force || c.key !== this._current)) { this._current = c.key; this.post({ type: 'current', key: c.key }); }
   }
 
   // Чат Claude открыт во вкладке и окно активно — значит, прочитан.
@@ -261,16 +275,32 @@ class ClodexView {
   push() {
     const items = this.payload();
     this.updateBadge(items);
-    this.post({ type: 'data', items, collapsed: this.gs.get('collapsed', {}), order: this.gs.get('groupOrder', []), icons: this.agentIcons(), customGroups: this.customGroups, lastAgent: this.gs.get('lastAgent', 'claude') });
+    this.post({ type: 'data', items, collapsed: this.gs.get('collapsed', {}), order: this.gs.get('groupOrder', []), icons: this.agentIcons(), installed: this.installed(), customGroups: this.customGroups, lastAgent: this.gs.get('lastAgent', 'claude') });
     if (this.lastQuery) this.post({ type: 'results', q: this.lastQuery, results: search(this.chats, this.lastQuery, this.gs.get('titles', {})) });
+    if (!this._currentSent) { this._currentSent = true; this.postCurrent(true); } // один раз после первой загрузки
   }
 
   post(m) { if (this.view) this.view.webview.postMessage(m); }
 
+  // Какие агенты установлены в VS Code. Нет расширения — его кнопки в панели неактивны.
+  installed() {
+    return {
+      claude: !!vscode.extensions.getExtension(AGENT_EXT.claude),
+      codex: !!vscode.extensions.getExtension(AGENT_EXT.codex),
+    };
+  }
+
+  // Агент не установлен — сказать об этом и предложить найти его в магазине расширений.
+  async notInstalled(agent) {
+    const name = agent === 'codex' ? 'Codex' : 'Claude Code';
+    const go = await vscode.window.showWarningMessage(`Clodex: ${name} не установлен в VS Code.`, 'Найти в расширениях');
+    if (go) await vscode.commands.executeCommand('workbench.extensions.search', AGENT_EXT[agent]);
+  }
+
   // Логотипы агентов берутся из установленных расширений Claude Code и Codex — в Clodex их нет.
   agentIcons() {
     if (this._icons) return this._icons;
-    const src = { claude: ['anthropic.claude-code', 'resources/claude-logo.svg'], codex: ['openai.chatgpt', 'resources/blossom-white.svg'] };
+    const src = { claude: [AGENT_EXT.claude, 'resources/claude-logo.svg'], codex: [AGENT_EXT.codex, 'resources/blossom-white.svg'] };
     const out = {};
     for (const [agent, [id, rel]] of Object.entries(src)) {
       try {
@@ -300,6 +330,7 @@ class ClodexView {
     if (!c) return;
     await this.setSeen(key, Date.now());
     this.push();
+    if (!this.installed()[c.agent]) return this.notInstalled(c.agent);
     try {
       if (c.agent === 'claude') {
         await vscode.commands.executeCommand('claude-vscode.editor.open', c.id);
@@ -313,15 +344,25 @@ class ClodexView {
 
   // group — создать чат сразу в группе: первый новый чат этого агента за 3 минуты попадёт туда
   async newChat(agent, group) {
-    if (agent === 'last') agent = this.gs.get('lastAgent', 'claude');
+    const inst = this.installed();
+    if (!inst.claude && !inst.codex) {
+      vscode.window.showWarningMessage('Clodex: не установлен ни Claude Code, ни Codex — новый чат создать нельзя.');
+      return;
+    }
+    if (agent === 'last') {
+      agent = this.gs.get('lastAgent', 'claude');
+      if (!inst[agent]) agent = inst.claude ? 'claude' : 'codex';
+    }
     if (!agent) {
-      const p = await vscode.window.showQuickPick([
+      const opts = [
         { label: '$(sparkle) Claude', description: 'новый чат Claude Code', id: 'claude' },
         { label: '$(terminal) Codex', description: 'новый чат Codex', id: 'codex' },
-      ], { placeHolder: 'С каким агентом начать чат?' });
+      ].filter((o) => inst[o.id]);
+      const p = opts.length === 1 ? opts[0] : await vscode.window.showQuickPick(opts, { placeHolder: 'С каким агентом начать чат?' });
       if (!p) return;
       agent = p.id;
     }
+    if (!inst[agent]) return this.notInstalled(agent);
     await this.gs.update('lastAgent', agent);
     if (group) this.pending = { group, agent, t: Date.now(), known: new Set(this.chats.map((c) => c.key)) };
     this.push();

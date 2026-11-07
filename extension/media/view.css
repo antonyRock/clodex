@@ -270,3 +270,9 @@ body.light mark { background: rgba(255,221,45,.6); }
 @keyframes badge { 0% { box-shadow: 0 0 0 0 rgba(255,69,58,.55); } 100% { box-shadow: 0 0 0 7px rgba(255,69,58,0); } }
 @keyframes breathe { 50% { opacity: .35; transform: scale(.8); } }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* Агент не установлен — кнопка серая и не нажимается */
+.newchat .nb:disabled, .chip:disabled { opacity: .38; cursor: not-allowed; transform: none; box-shadow: none; }
+.newchat .nb:disabled:hover { background: rgba(255,255,255,.05); }
+body.light .newchat .nb:disabled:hover { background: #EFEFF2; }
+.chip:disabled:hover { background: transparent; color: var(--muted); }

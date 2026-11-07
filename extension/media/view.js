@@ -12,11 +12,14 @@
   st.filter = st.filter || 'all'; st.q = st.q || '';
   if (!st.agents) st.agents = { claude: true, codex: true };
   const NO_GROUP = 'Без группы';
-  let items = [], collapsed = {}, order = [], icons = {}, customGroups = [], lastAgent = 'claude';
+  let items = [], collapsed = {}, order = [], icons = {}, customGroups = [], lastAgent = 'claude', installed = { claude: true, codex: true };
   // Открытый чат остаётся в фильтре (даже став прочитанным), пока не откроете другой.
   let sticky = null;
   const keep = (i) => i.key === sticky;
   const agName = (a) => (a === 'claude' ? 'Claude' : 'Codex');
+  // Агент для «+» в группе: последний, а если он не установлен — тот, что есть.
+  const plusAgent = () => (installed[lastAgent] ? lastAgent : installed.claude ? 'claude' : installed.codex ? 'codex' : '');
+  const NOT_INST = (a) => `${a === 'claude' ? 'Claude Code' : 'Codex'} не установлен в VS Code`;
   const badge = (a, tip) => icons[a]
     ? `<span class="ag logo ${a}" title="${tip || ''}">${icons[a]}</span>`
     : `<span class="ag ${a}" title="${tip || ''}">${a === 'claude' ? 'C' : 'X'}</span>`;
@@ -110,7 +113,11 @@
     $('filters').innerHTML =
       FILTERS.map(([k, n]) => `<button class="chip ${k === 'active' ? 'act' : ''} ${st.filter === k ? 'on' : ''} ${(k === 'unread' || k === 'active') && cnt[k] ? 'hot' : ''}" data-f="${k}" title="${(FILTER_TIP[k] || 'Все чаты') + (st.filter === k ? '. Нажмите ещё раз — ' + (isGrouped(k) ? 'списком' : 'по группам') : '')}">${k === 'active' ? BOLT : ''}${n}${st.filter === k ? `<span class="mode" title="Сейчас ${isGrouped(k) ? 'по группам' : 'списком'} — нажмите ещё раз, чтобы ${isGrouped(k) ? 'показать списком' : 'разложить по группам'}">${isGrouped(k) ? VIEW_ICON.groups : VIEW_ICON.list}</span>` : ''}${cnt[k] ? ` <b>${cnt[k]}</b>` : ''}</button>`).join('') +
       `<span class="sep"></span>` +
-      [['claude', 'Claude', 'C'], ['codex', 'Codex', 'X']].map(([k, n, l]) => `<button class="chip small icon ${st.agents[k] ? 'on' : ''}" data-a="${k}" title="${st.agents[k] ? 'Скрыть' : 'Показать'} чаты ${n}">${badge(k)}</button>`).join('');
+      [['claude', 'Claude', 'C'], ['codex', 'Codex', 'X']].map(([k, n, l]) => {
+        // Агент не установлен и его чатов нет — фильтр неактивен.
+        const off = !installed[k] && !items.some((i) => i.agent === k);
+        return `<button class="chip small icon ${st.agents[k] && !off ? 'on' : ''}" data-a="${k}" ${off ? 'disabled' : ''} title="${off ? NOT_INST(k) : (st.agents[k] ? 'Скрыть' : 'Показать') + ' чаты ' + n}">${badge(k)}</button>`;
+      }).join('');
     $('sum').innerHTML = cnt.unread ? `<span class="pulse"></span>${cnt.unread} новых` : 'всё прочитано';
     $('sum').title = cnt.unread ? `Непрочитанных чатов: ${cnt.unread}` : '';
     $('sum').className = 'sum' + (cnt.unread ? ' hot' : '');
@@ -181,7 +188,7 @@
           ${work ? '<span class="gwork" title="Агент работает"></span>' : ''}
           ${un ? `<span class="gun" title="Непрочитанных: ${un}">${un}</span>` : ''}
           <span class="gtime">${arr[0] ? ago(arr[0].ts) : ''}</span>
-          <button class="ib gplus" data-gplus="1" title="Новый чат ${agName(lastAgent)} в группе «${esc(g)}»"><svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>${badge(lastAgent)}</button>
+          ${plusAgent() ? `<button class="ib gplus" data-gplus="1" title="Новый чат ${agName(plusAgent())} в группе «${esc(g)}»"><svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>${badge(plusAgent())}</button>` : ''}
           <button class="ib gmore" data-gmore="1" title="Группа: порядок, переименовать, удалить">${ICON.more}</button>
         </div>
         <div class="gb">${arr.length ? arr.map((i) => row(i)).join('') : '<div class="gempty">Пусто. Перетащите сюда чат мышью — или «⋯» у чата → «Перенести в группу».</div>'}</div></div>`;
@@ -334,13 +341,23 @@
     const m = e.data;
     if (m.type === 'data') {
       items = m.items; collapsed = m.collapsed || {}; order = m.order || []; icons = m.icons || {}; customGroups = m.customGroups || []; lastAgent = m.lastAgent || 'claude';
-      document.querySelectorAll('[data-new] .nbi').forEach((b) => { b.innerHTML = badge(b.parentElement.dataset.new); });
+      if (m.installed) installed = m.installed;
+      // Если в выключенном фильтре остался единственный включённый агент — показать того, что есть.
+      if (!installed.claude && !items.some((i) => i.agent === 'claude')) st.agents.codex = true;
+      if (!installed.codex && !items.some((i) => i.agent === 'codex')) st.agents.claude = true;
+      document.querySelectorAll('[data-new]').forEach((b) => {
+        const a = b.dataset.new;
+        b.querySelector('.nbi').innerHTML = badge(a);
+        b.disabled = !installed[a];
+        b.title = installed[a] ? `Начать новый чат с ${agName(a)}` : NOT_INST(a);
+      });
       if (!dragG) render();
     }
     if (m.type === 'results') {
       if (m.q !== st.q) return;
       results = m.q ? m.results : null; resultQ = m.q; render();
     }
+    if (m.type === 'current') { sticky = m.key; if (!dragG) render(); }
     if (m.type === 'theme') applyTheme(!!m.light);
     if (m.type === 'focusSearch') { q.focus(); q.select(); }
   });
