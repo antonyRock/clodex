@@ -35,6 +35,7 @@ async function activate(context) {
     vscode.commands.registerCommand('clodex.refresh', () => provider.refresh(true)),
     vscode.commands.registerCommand('clodex.newChat', () => provider.newChat()),
     vscode.commands.registerCommand('clodex.newGroup', () => provider.newGroup()),
+    vscode.commands.registerCommand('clodex.toggleTheme', () => provider.toggleVsTheme()),
     vscode.commands.registerCommand('clodex.expandAll', () => provider.setAllCollapsed(false)),
     vscode.commands.registerCommand('clodex.collapseAll', () => provider.setAllCollapsed(true)),
     vscode.commands.registerCommand('clodex.markAllRead', () => provider.markAllRead()),
@@ -96,6 +97,7 @@ class ClodexView {
     this.ctx.subscriptions.push({ dispose: () => clearTimeout(this.timer) });
     this.ctx.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs(() => this.markActiveTabs()));
     this.ctx.subscriptions.push(vscode.window.onDidChangeWindowState(() => this.markActiveTabs()));
+    this.ctx.subscriptions.push(vscode.window.onDidChangeActiveColorTheme(() => this.postTheme()));
     this.cacheTimer = setInterval(() => this.saveCache(), 30000);
     this.ctx.subscriptions.push({ dispose: () => { clearInterval(this.cacheTimer); this.saveCache(); } });
   }
@@ -366,6 +368,24 @@ class ClodexView {
     this.push();
   }
 
+  isLightTheme() {
+    const k = vscode.window.activeColorTheme.kind;
+    return k === vscode.ColorThemeKind.Light || k === vscode.ColorThemeKind.HighContrastLight;
+  }
+  postTheme() { this.post({ type: 'theme', light: this.isLightTheme() }); }
+
+  // Переключает тему всего VS Code (то же, что Cmd+K Cmd+T): светлая ↔ тёмная из настроек Clodex.
+  async toggleVsTheme() {
+    const cfg = vscode.workspace.getConfiguration('clodex');
+    const next = this.isLightTheme() ? (cfg.get('darkTheme') || 'Dark Modern') : (cfg.get('lightTheme') || 'Light Modern');
+    log.info('тема VS Code → ' + next);
+    try {
+      await vscode.workspace.getConfiguration('workbench').update('colorTheme', next, vscode.ConfigurationTarget.Global);
+    } catch (e) {
+      vscode.window.showErrorMessage(`Clodex: не удалось включить тему «${next}»: ${e.message || e}`);
+    }
+  }
+
   get customGroups() { return this.gs.get('customGroups', []); }
 
   async placePending() {
@@ -484,7 +504,7 @@ class ClodexView {
 <div id="grid"></div>
 <div id="top">
   <div class="brand"><span class="word">Clodex</span><span class="sq"></span><span id="sum" class="sum"></span>
-    <span class="tools"><button id="newGroup" class="ib pill" title="Создать новую группу"><svg viewBox="0 0 16 16"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.5h5.6c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7v4M6 9h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>Группа</button><button id="themeBtn" class="ib" title="Тема"></button><button id="expandAll" class="ib" title="Раскрыть все группы"><svg viewBox="0 0 16 16"><path d="M4 4l4 3.5L12 4M4 8.5 8 12l4-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button id="collapseAll" class="ib" title="Свернуть все группы"><svg viewBox="0 0 16 16"><path d="M4 7.5 8 4l4 3.5M4 12l4-3.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span></div>
+    <span class="tools"><button id="newGroup" class="ib pill" title="Создать новую группу"><svg viewBox="0 0 16 16"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.5h5.6c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7v4M6 9h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>Группа</button><button id="themeBtn" class="ib" title="Светлая / тёмная тема VS Code"></button><button id="expandAll" class="ib" title="Раскрыть все группы"><svg viewBox="0 0 16 16"><path d="M4 4l4 3.5L12 4M4 8.5 8 12l4-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button id="collapseAll" class="ib" title="Свернуть все группы"><svg viewBox="0 0 16 16"><path d="M4 7.5 8 4l4 3.5M4 12l4-3.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span></div>
   <div class="searchbox"><input id="q" type="search" placeholder="Поиск по тексту чатов…" spellcheck="false">
   </div>
   <div class="newchat">
@@ -497,7 +517,8 @@ class ClodexView {
 <div id="list"></div>
 <script nonce="${nonce}" src="${js}"></script></body></html>`;
     view.webview.onDidReceiveMessage(async (m) => {
-      if (m.type === 'ready') { log.info('панель открыта'); this.push(); }
+      if (m.type === 'ready') { log.info('панель открыта'); this.postTheme(); this.push(); }
+      if (m.type === 'toggleVsTheme') this.toggleVsTheme();
       if (m.type === 'clientError') { log.error('ошибка в панели: ' + m.message); }
       if (m.type === 'open') this.open(m.key);
       if (m.type === 'menu') this.menu(m.key);

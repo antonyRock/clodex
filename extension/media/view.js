@@ -55,26 +55,24 @@
 
   const save = () => vscode.setState(st);
 
-  // ---------- тема: авто (как VS Code) → тёмная → светлая ----------
-  const THEMES = ['auto', 'dark', 'light'];
-  const THEME_NAME = { auto: 'как в VS Code', dark: 'тёмная', light: 'светлая' };
+  // ---------- тема ----------
+  // Clodex всегда в цветах VS Code. Светлая ли тема — сообщает расширение (событие VS Code),
+  // без слежения за классами страницы. Кнопка ☀/☾ переключает тему всего VS Code.
   const THEME_ICON = {
-    auto: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg>',
-    dark: '<svg viewBox="0 0 16 16"><path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
-    light: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
+    moon: '<svg viewBox="0 0 16 16"><path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+    sun: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
   };
-  st.theme = st.theme || 'auto';
-  function applyTheme() {
-    const b = document.body;
-    const vsLight = b.classList.contains('vscode-light') || b.classList.contains('vscode-high-contrast-light');
-    b.classList.toggle('light', st.theme === 'light' || (st.theme === 'auto' && vsLight));
-    b.classList.toggle('auto', st.theme === 'auto');
+  let isLight = null;
+  function applyTheme(light) {
+    if (light === isLight) return;
+    isLight = light;
+    document.body.classList.toggle('light', light);
+    document.body.classList.add('auto');
     const btn = document.getElementById('themeBtn');
-    if (btn) { btn.innerHTML = THEME_ICON[st.theme]; btn.title = 'Тема: ' + THEME_NAME[st.theme] + ' — нажмите, чтобы сменить'; }
+    if (btn) { btn.innerHTML = light ? THEME_ICON.moon : THEME_ICON.sun; btn.title = light ? 'Включить тёмную тему VS Code' : 'Включить светлую тему VS Code'; }
   }
-  // VS Code меняет класс body при смене своей темы
-  new MutationObserver(applyTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] });
-  applyTheme();
+  // до первого сообщения расширения — по теме, с которой открылась страница (один раз)
+  applyTheme(document.body.classList.contains('vscode-light') || document.body.classList.contains('vscode-high-contrast-light'));
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   function ago(t) {
@@ -207,7 +205,7 @@
       save(); render(); return;
     }
     if (e.target.closest('#newGroup') || e.target.closest('[data-addgroup]')) { vscode.postMessage({ type: 'newGroup' }); return; }
-    if (e.target.closest('#themeBtn')) { st.theme = THEMES[(THEMES.indexOf(st.theme) + 1) % 3]; save(); applyTheme(); return; }
+    if (e.target.closest('#themeBtn')) { vscode.postMessage({ type: 'toggleVsTheme' }); return; }
     if (e.target.closest('#expandAll')) { vscode.postMessage({ type: 'collapseAll', value: false }); return; }
     if (e.target.closest('#collapseAll')) { vscode.postMessage({ type: 'collapseAll', value: true }); return; }
     const gp = e.target.closest('[data-gplus]');
@@ -343,6 +341,7 @@
       if (m.q !== st.q) return;
       results = m.q ? m.results : null; resultQ = m.q; render();
     }
+    if (m.type === 'theme') applyTheme(!!m.light);
     if (m.type === 'focusSearch') { q.focus(); q.select(); }
   });
 

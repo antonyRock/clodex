@@ -2,7 +2,7 @@
   "name": "clodex",
   "displayName": "Clodex",
   "description": "Чаты Claude Code и Codex в одном списке: поиск по тексту, непрочитанные, фильтры.",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "publisher": "clodex",
   "private": true,
   "engines": {
@@ -41,6 +41,16 @@
           "type": "string",
           "default": "",
           "description": "Путь к реестру проектов (таблица с колонкой «Признаки») для автоматических групп. Пусто — ~/Claude_AI/03_Проекты/00_Реестр проектов.md; файла нет — автогрупп нет."
+        },
+        "clodex.lightTheme": {
+          "type": "string",
+          "default": "Light Modern",
+          "description": "Светлая тема VS Code для кнопки ☀/☾ в Clodex (название как в Cmd+K Cmd+T)."
+        },
+        "clodex.darkTheme": {
+          "type": "string",
+          "default": "Dark Modern",
+          "description": "Тёмная тема VS Code для кнопки ☀/☾ в Clodex (название как в Cmd+K Cmd+T)."
         }
       }
     },
@@ -78,6 +88,11 @@
         "command": "clodex.collapseAll",
         "title": "Clodex: Свернуть все группы",
         "icon": "$(collapse-all)"
+      },
+      {
+        "command": "clodex.toggleTheme",
+        "title": "Clodex: Светлая / тёмная тема VS Code",
+        "icon": "$(color-mode)"
       }
     ],
     "menus": {
