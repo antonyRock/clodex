@@ -12,7 +12,7 @@
   st.filter = st.filter || 'all'; st.q = st.q || '';
   if (!st.agents) st.agents = { claude: true, codex: true };
   const NO_GROUP = 'Без группы';
-  let items = [], collapsed = {}, order = [], icons = {}, customGroups = [], lastAgent = 'claude', installed = { claude: true, codex: true };
+  let items = [], favorites = {}, collapsed = {}, order = [], icons = {}, customGroups = [], lastAgent = 'claude', installed = { claude: true, codex: true };
   // Открытый чат остаётся в фильтре (даже став прочитанным), пока не откроете другой.
   let sticky = null;
   const keep = (i) => i.key === sticky;
@@ -29,14 +29,14 @@
   const list = $('list'), q = $('q');
   q.value = st.q;
 
-  const FILTERS = [['all', 'Все'], ['active', 'Активные'], ['recent', 'Последние'], ['unread', 'Не прочитано'], ['waiting', 'Жду ответа'], ['archive', 'Архив']];
+  const FILTERS = [['all', 'Все'], ['fav', 'Избранное'], ['active', 'Активные'], ['recent', 'Последние'], ['unread', 'Не прочитано'], ['waiting', 'Жду ответа'], ['archive', 'Архив']];
   const FILTER_TIP = {
     active: 'Агент работает, ответил, а вы не прочитали, или в чате что-то было за последние 2 часа',
     recent: '40 последних чатов', unread: 'Агент ответил, а вы не открывали',
-    waiting: 'Последний ответ агента кончается вопросом, а вы после него не писали', archive: 'Чаты, убранные в архив',
+    waiting: 'Последний ответ агента кончается вопросом, а вы после него не писали', archive: 'Чаты, убранные в архив', fav: 'Избранные группы — звёздочка у группы',
   };
   // Вид каждого фильтра: по группам или списком; повторное нажатие на выбранный фильтр переключает.
-  const GROUPED_DEFAULT = { all: true, active: true, recent: false, unread: false, waiting: false, archive: false };
+  const GROUPED_DEFAULT = { all: true, fav: true, active: true, recent: false, unread: false, waiting: false, archive: false };
   if (!st.grouped) st.grouped = { ...GROUPED_DEFAULT, recent: !!st.recentGrouped };
   const isGrouped = (f) => (f in st.grouped ? st.grouped[f] : GROUPED_DEFAULT[f]);
   const VIEW_ICON = {
@@ -53,6 +53,7 @@
     pencil: '<svg viewBox="0 0 16 16"><path d="M10.5 2.5l3 3L6 13H3v-3z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
     more: '<svg viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.2" fill="currentColor"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="12.5" cy="8" r="1.2" fill="currentColor"/></svg>',
     grip: '<svg viewBox="0 0 16 16"><g fill="currentColor"><circle cx="6" cy="4" r="1"/><circle cx="10" cy="4" r="1"/><circle cx="6" cy="8" r="1"/><circle cx="10" cy="8" r="1"/><circle cx="6" cy="12" r="1"/><circle cx="10" cy="12" r="1"/></g></svg>',
+    star: '<svg viewBox="0 0 16 16"><path d="M8 1.9l1.83 3.86 4.22.53-3.1 2.92.8 4.19L8 11.33 4.25 13.4l.8-4.19-3.1-2.92 4.22-.53z" stroke-width="1.15" stroke-linejoin="round"/></svg>',
     chev: '<svg viewBox="0 0 16 16"><path d="M5 6l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
 
@@ -109,9 +110,10 @@
       waiting: v.filter((i) => i.waiting).length,
       archive: items.filter((i) => i.archived && byAgent(i)).length,
       active: v.filter(isActive).length,
+      fav: new Set(v.filter((i) => favorites[i.group]).map((i) => i.group)).size,
     };
     $('filters').innerHTML =
-      FILTERS.map(([k, n]) => `<button class="chip ${k === 'active' ? 'act' : ''} ${st.filter === k ? 'on' : ''} ${(k === 'unread' || k === 'active') && cnt[k] ? 'hot' : ''}" data-f="${k}" title="${(FILTER_TIP[k] || 'Все чаты') + (st.filter === k ? '. Нажмите ещё раз — ' + (isGrouped(k) ? 'списком' : 'по группам') : '')}">${k === 'active' ? BOLT : ''}${n}${st.filter === k ? `<span class="mode" title="Сейчас ${isGrouped(k) ? 'по группам' : 'списком'} — нажмите ещё раз, чтобы ${isGrouped(k) ? 'показать списком' : 'разложить по группам'}">${isGrouped(k) ? VIEW_ICON.groups : VIEW_ICON.list}</span>` : ''}${cnt[k] ? ` <b>${cnt[k]}</b>` : ''}</button>`).join('') +
+      FILTERS.map(([k, n]) => `<button class="chip ${k === 'active' ? 'act' : ''} ${st.filter === k ? 'on' : ''} ${(k === 'unread' || k === 'active') && cnt[k] ? 'hot' : ''}" data-f="${k}" title="${(FILTER_TIP[k] || 'Все чаты') + (st.filter === k ? '. Нажмите ещё раз — ' + (isGrouped(k) ? 'списком' : 'по группам') : '')}">${k === 'active' ? BOLT : k === 'fav' ? `<span class="fstar">${ICON.star}</span>` : ''}${n}${st.filter === k ? `<span class="mode" title="Сейчас ${isGrouped(k) ? 'по группам' : 'списком'} — нажмите ещё раз, чтобы ${isGrouped(k) ? 'показать списком' : 'разложить по группам'}">${isGrouped(k) ? VIEW_ICON.groups : VIEW_ICON.list}</span>` : ''}${cnt[k] ? ` <b>${cnt[k]}</b>` : ''}</button>`).join('') +
       `<span class="sep"></span>` +
       [['claude', 'Claude', 'C'], ['codex', 'Codex', 'X']].map(([k, n, l]) => {
         // Агент не установлен и его чатов нет — фильтр неактивен.
@@ -160,12 +162,13 @@
       return;
     }
     let v = (st.filter === 'archive' ? items.filter((i) => i.archived && byAgent(i)) : live()).sort((a, b) => b.ts - a.ts);
+    if (st.filter === 'fav') v = v.filter((i) => favorites[i.group]);
     if (st.filter === 'unread') v = v.filter((i) => i.status === 'unread' || keep(i));
     if (st.filter === 'active') v = v.filter((i) => isActive(i) || keep(i));
     if (st.filter === 'waiting') v = v.filter((i) => i.waiting || keep(i));
     if (st.filter === 'recent') v = v.slice(0, 40);
     if (!v.length) {
-      const msg = { unread: 'Всё прочитано', waiting: 'Никто не ждёт ответа', archive: 'Архив пуст', active: 'Активных нет: никто не работает, не ждёт и не ответил' }[st.filter] || 'Чатов нет';
+      const msg = { unread: 'Всё прочитано', waiting: 'Никто не ждёт ответа', archive: 'Архив пуст', fav: 'Избранного пока нет — наведите на группу и нажмите звёздочку', active: 'Активных нет: никто не работает, не ждёт и не ответил' }[st.filter] || 'Чатов нет';
       list.innerHTML = `<div class="empty">${msg}</div>`;
       return;
     }
@@ -185,10 +188,14 @@
           <span class="grip">${ICON.grip}</span>
           <span class="chev">${ICON.chev}</span>
           <span class="gn">${esc(g)}</span>
+          ${g !== NO_GROUP ? `<button class="ib gstar ${favorites[g] ? 'on' : ''}" data-gstar="1" title="${favorites[g] ? 'Убрать из избранного' : 'В избранное'}">${ICON.star}</button>` : '<span class="gsp"></span>'}
           ${work ? '<span class="gwork" title="Агент работает"></span>' : ''}
           ${un ? `<span class="gun" title="Непрочитанных: ${un}">${un}</span>` : ''}
           <span class="gtime">${arr[0] ? ago(arr[0].ts) : ''}</span>
           ${plusAgent() ? `<button class="ib gplus" data-gplus="1" title="Новый чат ${agName(plusAgent())} в группе «${esc(g)}»"><svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>${badge(plusAgent())}</button>` : ''}
+          ${arr.length ? (st.filter === 'archive'
+            ? `<button class="ib garch" data-garch="0" title="Вернуть всю группу «${esc(g)}» из архива (${arr.length})">${ICON.unarchive}</button>`
+            : `<button class="ib garch" data-garch="1" title="Всю группу «${esc(g)}» — в архив (${arr.length})">${ICON.archive}</button>`) : ''}
           <button class="ib gmore" data-gmore="1" title="Группа: порядок, переименовать, удалить">${ICON.more}</button>
         </div>
         <div class="gb">${arr.length ? arr.map((i) => row(i)).join('') : '<div class="gempty">Пусто. Перетащите сюда чат мышью — или «⋯» у чата → «Перенести в группу».</div>'}</div></div>`;
@@ -217,6 +224,24 @@
     if (e.target.closest('#collapseAll')) { vscode.postMessage({ type: 'collapseAll', value: true }); return; }
     const gp = e.target.closest('[data-gplus]');
     if (gp) { vscode.postMessage({ type: 'new', agent: 'last', group: gp.closest('.gh').dataset.g }); return; }
+    const gs = e.target.closest('[data-gstar]');
+    if (gs) {
+      const g = gs.closest('.gh').dataset.g, v = !favorites[g];
+      favorites = { ...favorites, [g]: v }; // сразу на экране, не дожидаясь расширения
+      vscode.postMessage({ type: 'favGroup', group: g, value: v });
+      render();
+      if (v) { const b = [...document.querySelectorAll('.gh')].find((h) => h.dataset.g === g)?.querySelector('.gstar'); if (b) b.classList.add('pop'); }
+      return;
+    }
+    const ga = e.target.closest('[data-garch]');
+    if (ga) {
+      // только видимые чаты группы (с учётом фильтра Claude/Codex и «Архив»)
+      const card = ga.closest('.group');
+      const keys = [...card.querySelectorAll('.chat[data-k]')].map((el) => el.dataset.k);
+      card.classList.add('leaving');
+      setTimeout(() => vscode.postMessage({ type: 'archiveGroup', keys, value: ga.dataset.garch === '1' }), 180);
+      return;
+    }
     const gm = e.target.closest('[data-gmore]');
     if (gm) { vscode.postMessage({ type: 'groupMenu', group: gm.closest('.gh').dataset.g }); return; }
     const gh = e.target.closest('.gh');
@@ -340,7 +365,7 @@
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (m.type === 'data') {
-      items = m.items; collapsed = m.collapsed || {}; order = m.order || []; icons = m.icons || {}; customGroups = m.customGroups || []; lastAgent = m.lastAgent || 'claude';
+      items = m.items; favorites = m.favorites || {}; collapsed = m.collapsed || {}; order = m.order || []; icons = m.icons || {}; customGroups = m.customGroups || []; lastAgent = m.lastAgent || 'claude';
       if (m.installed) installed = m.installed;
       // Если в выключенном фильтре остался единственный включённый агент — показать того, что есть.
       if (!installed.claude && !items.some((i) => i.agent === 'claude')) st.agents.codex = true;

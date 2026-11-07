@@ -9,7 +9,7 @@ const BG_GROUP = 'Фоновые'; // сессии `claude -p` (ночные з�
 // Реестр проектов рабочей папки агента: ярлык ~/Claude_AI ставит комплект установки.
 const REGISTRY = path.join(HOME, 'Claude_AI', '03_Проекты', '00_Реестр проектов.md');
 // При первом запуске переносится состояние прежней сборки Clodex с другим издателем (<кто-то>.clodex).
-const STATE_KEYS = ['initialized', 'seen', 'groupOverride', 'groupAlias', 'dissolved', 'groupOrder', 'collapsed', 'archived', 'titles'];
+const STATE_KEYS = ['initialized', 'seen', 'groupOverride', 'groupAlias', 'dissolved', 'groupOrder', 'collapsed', 'archived', 'titles', 'favorites'];
 
 const WORKING_MS = 3 * 60 * 1000;  // файл менялся недавно и ответа нет — агент работает
 const POLL_VISIBLE = 4000;
@@ -278,7 +278,7 @@ class ClodexView {
   push() {
     const items = this.payload();
     this.updateBadge(items);
-    this.post({ type: 'data', items, collapsed: this.gs.get('collapsed', {}), order: this.gs.get('groupOrder', []), icons: this.agentIcons(), installed: this.installed(), customGroups: this.customGroups, lastAgent: this.gs.get('lastAgent', 'claude') });
+    this.post({ type: 'data', items, collapsed: this.gs.get('collapsed', {}), order: this.gs.get('groupOrder', []), icons: this.agentIcons(), installed: this.installed(), customGroups: this.customGroups, favorites: this.gs.get('favorites', {}), lastAgent: this.gs.get('lastAgent', 'claude') });
     if (this.lastQuery) this.post({ type: 'results', q: this.lastQuery, results: search(this.chats, this.lastQuery, this.gs.get('titles', {})) });
     if (!this._currentSent) { this._currentSent = true; this.postCurrent(true); } // один раз после первой загрузки
   }
@@ -492,6 +492,7 @@ class ClodexView {
     ];
     if (name !== NO_GROUP) items.push({ label: '$(trash) Удалить группу (чаты останутся — перейдут в «Без группы»)', id: 'del' });
     items.push({ label: '$(archive) Все чаты группы — в архив', id: 'archiveAll' });
+    if (this.chats.some((c) => this.groupOf(c) === name && this.isArchived(c))) items.push({ label: '$(inbox) Вернуть всю группу из архива', id: 'unarchiveAll' });
     const p = await vscode.window.showQuickPick(items, { placeHolder: `Группа «${name}»` });
     if (!p) return;
     const members = this.chats.filter((c) => this.groupOf(c) === name);
@@ -506,6 +507,8 @@ class ClodexView {
       const d = { ...this.gs.get('dissolved', {}) }; delete d[nn]; await this.gs.update('dissolved', d);
       await this.gs.update('groupOrder', this.gs.get('groupOrder', []).map((g) => (g === name ? nn : g)));
       await this.gs.update('customGroups', [...new Set(this.customGroups.map((g) => (g === name ? nn : g)))]);
+      const f = { ...this.gs.get('favorites', {}) };
+      if (f[name]) { delete f[name]; f[nn] = true; await this.gs.update('favorites', f); }
     }
     if (p.id === 'del') {
       const ok = await vscode.window.showWarningMessage(`Удалить группу «${name}»? Чатов в ней: ${members.length}. Чаты не удаляются — перейдут в «Без группы».`, { modal: true }, 'Удалить группу');
@@ -517,10 +520,11 @@ class ClodexView {
       await this.gs.update('dissolved', { ...this.gs.get('dissolved', {}), [name]: true });
       await this.gs.update('groupOrder', this.gs.get('groupOrder', []).filter((g) => g !== name));
       await this.gs.update('customGroups', this.customGroups.filter((g) => g !== name));
+      const f = { ...this.gs.get('favorites', {}) }; delete f[name]; await this.gs.update('favorites', f);
     }
-    if (p.id === 'archiveAll') {
+    if (p.id === 'archiveAll' || p.id === 'unarchiveAll') {
       const a = { ...this.gs.get('archived', {}) };
-      for (const c of members) a[c.key] = true;
+      for (const c of members) a[c.key] = p.id === 'archiveAll';
       await this.gs.update('archived', a);
     }
     this.push();
@@ -585,6 +589,16 @@ class ClodexView {
       if (m.type === 'rename') this.rename(m.key);
       if (m.type === 'newGroup') this.newGroup();
       if (m.type === 'move') this.moveToGroup(m.key, m.group);
+      if (m.type === 'favGroup') {
+        const f = { ...this.gs.get('favorites', {}) };
+        if (m.value) f[m.group] = true; else delete f[m.group];
+        await this.gs.update('favorites', f); this.push();
+      }
+      if (m.type === 'archiveGroup') {
+        const a = { ...this.gs.get('archived', {}) };
+        for (const k of m.keys || []) if (this.byKey.has(k)) a[k] = !!m.value;
+        await this.gs.update('archived', a); this.push();
+      }
       if (m.type === 'archive') { const c = this.byKey.get(m.key); if (c) this.setArchived(m.key, !this.isArchived(c)); }
       if (m.type === 'order') { await this.gs.update('groupOrder', m.order); this.push(); }
       if (m.type === 'collapseAll') this.setAllCollapsed(m.value);
