@@ -66,6 +66,7 @@ function parseClaude(content, id, file) {
     if (type !== 'user' && type !== 'assistant') continue;
     if (d.isSidechain || d.isMeta) continue;
     if (!chat.cwd && d.cwd) chat.cwd = d.cwd;
+    if (d.entrypoint === 'sdk-cli') chat.background = true; // запуск `claude -p` без окна (фоновая задача)
     const t = ts(d.timestamp);
     const c = d.message && d.message.content;
     if (type === 'user') {
@@ -97,6 +98,10 @@ function parseClaude(content, id, file) {
     }
   }
   chat.title = chat.customTitle || chat.aiTitle || chat.firstUser.split('\n')[0].slice(0, 80) || 'Без названия';
+  if (chat.background) { // «Ты фоновый агент… по заданию `…/Папка/00_Задание.md`» → «Папка — партия»
+    const m = chat.firstUser.match(/заданию `([^`]+)\/00_[^`/]*`/);
+    if (m && !chat.customTitle) chat.title = m[1].split('/').pop() + ' — партия';
+  }
   return chat;
 }
 
@@ -316,4 +321,34 @@ function autoGroup(chat, registry) {
   return bestScore >= 2 ? best : '';
 }
 
-module.exports = { Scanner, search, isQuestion, loadRegistry, autoGroup, readVsState, HOME };
+// Читаемый протокол фонового чата (`claude -p`): Claude Code такие чаты не открывает.
+function claudeTranscript(content, title) {
+  const out = [`# ${title}`, ''];
+  const cut = (t, n) => (t.length > n ? t.slice(0, n) + ' …' : t);
+  const time = (s) => { const d = new Date(s); return isNaN(d) ? '' : d.toLocaleString('ru-RU'); };
+  for (const line of content.split('\n')) {
+    if (!line || line.startsWith('{"type":"api-request')) continue;
+    let d;
+    try { d = JSON.parse(line); } catch { continue; }
+    if ((d.type !== 'user' && d.type !== 'assistant') || d.isSidechain) continue;
+    const c = d.message && d.message.content;
+    const blocks = typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : [];
+    for (const b of blocks) {
+      if (b.type === 'text' && b.text && b.text.trim()) {
+        const t = d.type === 'user' ? cleanClaudeUser(b.text) : b.text.trim();
+        if (!t) continue;
+        out.push('', d.type === 'user' ? `## 🧑 Задание · ${time(d.timestamp)}` : `### 🤖 Агент · ${time(d.timestamp)}`, '', t, '');
+      } else if (b.type === 'tool_use') {
+        const i = b.input || {};
+        const arg = i.command || i.file_path || i.pattern || i.path || i.url || i.description || JSON.stringify(i);
+        out.push(`- 🔧 **${b.name}** \`${cut(String(arg).replace(/\s+/g, ' '), 300).replace(/`/g, "'")}\``);
+      } else if (b.type === 'tool_result') {
+        const r = typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map((x) => x.text || '').join('\n') : '';
+        if (b.is_error) out.push(`  - ⚠️ ${cut(r.replace(/\s+/g, ' '), 300)}`);
+      }
+    }
+  }
+  return out.join('\n') + '\n';
+}
+
+module.exports = { Scanner, search, isQuestion, loadRegistry, autoGroup, readVsState, HOME, claudeTranscript };

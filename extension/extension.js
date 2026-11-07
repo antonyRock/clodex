@@ -2,9 +2,10 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
-const { Scanner, search, isQuestion, loadRegistry, autoGroup, readVsState, HOME } = require('./data.js');
+const { Scanner, search, isQuestion, loadRegistry, autoGroup, readVsState, HOME, claudeTranscript } = require('./data.js');
 
 const NO_GROUP = 'Без группы';
+const BG_GROUP = 'Фоновые'; // сессии `claude -p` (ночные задачи сервера)
 // Реестр проектов рабочей папки агента: ярлык ~/Claude_AI ставит комплект установки.
 const REGISTRY = path.join(HOME, 'Claude_AI', '03_Проекты', '00_Реестр проектов.md');
 // При первом запуске переносится состояние прежней сборки Clodex с другим издателем (<кто-то>.clodex).
@@ -57,7 +58,7 @@ class ClodexView {
     this.view = null;
     this.chats = [];
     this.byKey = new Map();
-    this.cacheFile = path.join(context.globalStorageUri.fsPath, 'cache-v1.json');
+    this.cacheFile = path.join(context.globalStorageUri.fsPath, 'cache-v2.json');
     this.scanner = new Scanner(this.loadCache());
     this.scanning = false;
     this.lastQuery = '';
@@ -164,6 +165,7 @@ class ClodexView {
   }
 
   isUnread(c, seen) {
+    if (c.background) return false; // фоновые не шумят «непрочитанным»
     const s = (seen || this.seen)[c.key] || 0;
     return c.finished && c.lastAssistantTs > s && c.lastAssistantTs >= c.lastUserTs;
   }
@@ -198,6 +200,7 @@ class ClodexView {
   }
 
   baseGroup(c) {
+    if (c.background) return BG_GROUP;
     if (c.claudeGroup) return c.claudeGroup;
     const reg = this.registry();
     const ak = c.key + ':' + c.msgCount;
@@ -236,7 +239,7 @@ class ClodexView {
       key: c.key, agent: c.agent, title: this.titleOf(c), group: this.groupOf(c),
       ts: c.lastTs, status: this.status_(c, seen),
       waiting: c.finished && c.lastAssistantTs >= c.lastUserTs && isQuestion(c.lastAssistantText),
-      archived: this.isArchived(c),
+      archived: this.isArchived(c), background: !!c.background,
     }));
   }
 
@@ -330,6 +333,7 @@ class ClodexView {
     if (!c) return;
     await this.setSeen(key, Date.now());
     this.push();
+    if (c.background) return this.openTranscript(c);
     if (!this.installed()[c.agent]) return this.notInstalled(c.agent);
     try {
       if (c.agent === 'claude') {
@@ -339,6 +343,20 @@ class ClodexView {
       }
     } catch (e) {
       vscode.window.showErrorMessage(`Clodex: не удалось открыть чат «${c.title}»: ${e.message || e}`);
+    }
+  }
+
+  // Фоновый чат: Claude Code его не показывает — открываем протокол (Markdown) и обновляем при повторном клике.
+  async openTranscript(c) {
+    try {
+      const content = fs.readFileSync(c.file, 'utf8');
+      const dir = path.join(this.ctx.globalStorageUri.fsPath, 'transcripts');
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `${c.id}.md`);
+      fs.writeFileSync(file, claudeTranscript(content, this.titleOf(c)));
+      await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(file));
+    } catch (e) {
+      vscode.window.showErrorMessage(`Clodex: не удалось открыть протокол «${c.title}»: ${e.message || e}`);
     }
   }
 

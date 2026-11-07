@@ -43,9 +43,9 @@
     groups: '<svg class="vi" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="4.5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="2" y="9" width="12" height="4.5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
     list: '<svg class="vi" viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   };
-  // Активные: агент работает, не прочитан или в чате что-то было за последние 2 часа
+  // Активные: агент работает, не прочитан или в чате что-то было за последние 2 часа; фоновые — только пока работают
   const ACTIVE_MS = 2 * 3600e3;
-  const isActive = (i) => i.status === 'working' || i.status === 'unread' || Date.now() - i.ts < ACTIVE_MS;
+  const isActive = (i) => i.status === 'working' || (!i.background && (i.status === 'unread' || Date.now() - i.ts < ACTIVE_MS));
   const BOLT = '<svg class="bolt" viewBox="0 0 16 16"><path d="M9.2 1.5 3.5 9h4l-.9 5.5L12.5 7h-4z" fill="currentColor"/></svg>';
   const ICON = {
     archive: '<svg viewBox="0 0 16 16"><path d="M2 3h12v3H2zM3 6v7h10V6M6.5 8.5h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
