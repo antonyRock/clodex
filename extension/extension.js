@@ -530,7 +530,7 @@ class ClodexView {
     this.push();
   }
 
-  // Порядок групп, как он сейчас на экране: сохранённый, затем по свежести, «Без группы» в конце.
+  // Порядок групп, как он сейчас на экране: сохранённый, затем по свежести, «Без группы» наверху.
   currentOrder() {
     const saved = this.gs.get('groupOrder', []);
     const last = new Map();
@@ -541,8 +541,8 @@ class ClodexView {
     }
     for (const g of this.customGroups) if (!last.has(g)) last.set(g, 0);
     const rest = [...last.keys()].filter((g) => !saved.includes(g) && g !== NO_GROUP).sort((a, b) => last.get(b) - last.get(a));
-    const out = [...saved.filter((g) => last.has(g)), ...rest];
-    if (last.has(NO_GROUP) && !out.includes(NO_GROUP)) out.push(NO_GROUP);
+    const out = [...saved.filter((g) => last.has(g) && g !== NO_GROUP), ...rest];
+    if (last.has(NO_GROUP)) out.unshift(NO_GROUP); // «Без группы» всегда первая — чаты, которые ещё не разложены
     return out;
   }
 

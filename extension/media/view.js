@@ -142,13 +142,13 @@
     </div>`;
   }
 
-  // Тот же порядок, что считает расширение: сохранённый, затем по свежести, «Без группы» в конце.
+  // Тот же порядок, что считает расширение: сохранённый, затем по свежести, «Без группы» наверху.
   function groupOrder(groups) {
     const names = [...groups.keys()];
     const t = (g) => (groups.get(g)[0] ? groups.get(g)[0].ts : 0);
     const rest = names.filter((g) => !order.includes(g) && g !== NO_GROUP).sort((a, b) => t(b) - t(a));
-    const out = [...order.filter((g) => groups.has(g)), ...rest];
-    if (groups.has(NO_GROUP) && !out.includes(NO_GROUP)) out.push(NO_GROUP);
+    const out = [...order.filter((g) => groups.has(g) && g !== NO_GROUP), ...rest];
+    if (groups.has(NO_GROUP)) out.unshift(NO_GROUP); // «Без группы» всегда первая — чаты, которые ещё не разложены
     return out;
   }
 
