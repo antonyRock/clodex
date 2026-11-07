@@ -1,8 +1,7 @@
 /* Clodex — в стиле Пульта Clodex v6: стекло, фиолетово-голубой акцент, жёлтый квадрат. */
 :root {
-  --bg: var(--vscode-sideBar-background, #0b0b10);
-  --ink: var(--vscode-foreground, #f5f5f7);
-  --muted: var(--vscode-descriptionForeground, rgba(245,245,247,.52));
+  /* свои цвета панели в обеих темах — не зависят от темы VS Code, поэтому переключатель работает в любой */
+  --bg: #0E0E13; --ink: #ECECF1; --muted: rgba(236,236,241,.5); --read-ink: rgba(236,236,241,.58);
   --a1: #8B7CFF; --a2: #0A84FF; --a3: #3FD8F2;
   --yellow: #FFDD2D;
   --bad: #FF453A; --warn: #FF9F0A;
@@ -10,22 +9,28 @@
   --gl-edge: rgba(255,255,255,.08); --gl-hi: rgba(255,255,255,.10);
   --gl-shadow: 0 2px 6px rgba(0,0,0,.22), 0 12px 32px rgba(0,0,0,.28);
   --hover: rgba(255,255,255,.045);
-  --chip-on: linear-gradient(135deg, rgba(139,124,255,.35), rgba(63,216,242,.22));
+  --chip-on: linear-gradient(135deg, rgba(139,124,255,.35), rgba(63,216,242,.22)); --chip-on-ink: #ECECF1;
   --grid: rgba(139,124,255,.07);
   --claude: #C96442; --codex: #5B6B7F;
+  color-scheme: dark;
 }
-/* светлая тема VS Code: белые плашки, графит, жёлтый в акцентах */
-body.vscode-light {
-  --ink: #333333; --muted: #8A8A8E;
-  --a1: #333333; --a2: #333333; --a3: #333333;
-  --bad: #F2565A; --warn: #FF7E16;
-  --gl-top: rgba(255,255,255,.92); --gl-bot: rgba(255,255,255,.78);
-  --gl-edge: rgba(0,0,0,.06); --gl-hi: rgba(255,255,255,1);
-  --gl-shadow: 0 0 0 .5px rgba(0,0,0,.05), 0 1px 2px rgba(0,0,0,.04), 0 6px 20px rgba(30,30,40,.06);
-  --hover: rgba(0,0,0,.035);
-  --chip-on: var(--yellow);
-  --grid: rgba(0,0,0,.035);
+/* светлая — как светлый пульт: светло-серый фон, белые карточки, графит, жёлтый только в акцентах */
+body.light {
+  --bg: #F4F4F6; --ink: #1D1D1F; --muted: #86868B; --read-ink: #55555A;
+  --a1: #262626; --a2: #262626; --a3: #262626;
+  --bad: #F0444A; --warn: #F08300;
+  --gl-top: #FFFFFF; --gl-bot: #FFFFFF;
+  --gl-edge: rgba(0,0,0,.07); --gl-hi: rgba(255,255,255,0);
+  --gl-shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(20,20,30,.05);
+  --hover: rgba(0,0,0,.04);
+  --chip-on: #262626; --chip-on-ink: #FFFFFF;
+  --grid: rgba(0,0,0,.04);
+  color-scheme: light;
 }
+
+/* авто: фон как у боковой панели VS Code, чтобы панель сливалась с любой темой */
+body.auto { --bg: var(--vscode-sideBar-background, #0E0E13); }
+body.light.auto { --bg: var(--vscode-sideBar-background, #F4F4F6); }
 
 * { box-sizing: border-box; }
 body {
@@ -43,8 +48,8 @@ body {
     linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 22px 22px;
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0,0,0,.5) 40%, transparent 85%);
 }
-body.vscode-light #grid { background:
-    radial-gradient(120% 50% at 20% -10%, rgba(255,221,45,.16), transparent 60%),
+body.light #grid { background:
+    radial-gradient(120% 45% at 15% -12%, rgba(255,221,45,.18), transparent 60%),
     linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 22px 22px,
     linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 22px 22px; }
 
@@ -62,13 +67,22 @@ body.vscode-light #grid { background:
   background: linear-gradient(90deg, #fff 0%, var(--a1) 55%, var(--a3) 100%);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
-body.vscode-light .word { background: none; -webkit-text-fill-color: var(--ink); }
+body.light .word { background: none; -webkit-text-fill-color: var(--ink); }
 .sq { width: 6px; height: 6px; border-radius: 1.5px; background: var(--yellow); margin-top: 6px; }
-.sum { margin-left: 4px; color: var(--muted); font-size: 11px; display: flex; align-items: center; gap: 5px; }
+.sum { white-space: nowrap; margin-left: 4px; color: var(--muted); font-size: 11px; display: flex; align-items: center; gap: 5px; }
 .sum.hot { color: var(--bad); font-weight: 600; }
 .sum .pulse { position: relative; width: 6px; height: 6px; border-radius: 50%; background: var(--bad); animation: blink 1.1s ease-in-out infinite; }
 .sum .pulse::after { content: ""; position: absolute; inset: -1px; border-radius: 50%; border: 1.5px solid var(--bad); animation: beacon 1.6s ease-out infinite; }
-.tools { margin-left: auto; display: flex; gap: 2px; }
+.tools { margin-left: auto; display: flex; gap: 2px; align-items: center; }
+.ib.pill { width: auto; padding: 3px 8px 3px 6px; gap: 4px; font-size: 11.5px; font-weight: 600; border: 1px solid var(--gl-edge); border-radius: 7px; margin-right: 2px; }
+.ib.pill svg { width: 14px; height: 14px; }
+.addgroup {
+  display: block; width: 100%; margin: 8px 0; padding: 9px; border-radius: 14px; font-size: 12px; font-weight: 600;
+  color: var(--muted); background: transparent; border: 1.5px dashed var(--gl-edge); transition: color .15s, border-color .15s, background .15s;
+}
+.addgroup:hover { color: var(--ink); border-color: var(--a3); background: var(--hover); }
+body.light .addgroup { border-color: rgba(0,0,0,.14); }
+body.light .addgroup:hover { border-color: #262626; }
 
 button { font: inherit; cursor: pointer; }
 .ib {
@@ -87,13 +101,33 @@ button { font: inherit; cursor: pointer; }
 }
 .searchbox input::placeholder { color: var(--muted); }
 .searchbox input:focus { border-color: rgba(139,124,255,.6); box-shadow: 0 0 0 3px rgba(139,124,255,.15); }
-body.vscode-light .searchbox input:focus { border-color: #333; box-shadow: 0 0 0 3px rgba(255,221,45,.35); }
-.newbtn {
-  flex: none; border: none; border-radius: 10px; padding: 0 12px; font-size: 12px; font-weight: 650; white-space: nowrap; color: #fff;
-  background: linear-gradient(135deg, var(--a1), var(--a2)); box-shadow: 0 4px 14px rgba(10,132,255,.25);
+body.light .searchbox input:focus { border-color: #262626; box-shadow: 0 0 0 3px rgba(255,221,45,.4); }
+body.light .searchbox input { box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+/* «Новый чат: Claude | Codex» — одна плашка-переключатель на всю ширину */
+.newchat {
+  display: flex; align-items: stretch; margin-top: 7px; padding: 3px; gap: 3px; border-radius: 11px;
+  background: linear-gradient(180deg, var(--gl-top), var(--gl-bot)); border: 1px solid var(--gl-edge); box-shadow: inset 0 1px 0 var(--gl-hi);
 }
-.newbtn:hover { filter: brightness(1.12); }
-body.vscode-light .newbtn { background: var(--yellow); color: #333; box-shadow: none; }
+.newchat .nl {
+  display: inline-flex; align-items: center; gap: 4px; padding: 0 6px 0 5px; flex: none;
+  font-size: 11.5px; font-weight: 600; color: var(--muted); white-space: nowrap;
+}
+.newchat .nl svg { width: 12px; height: 12px; }
+.newchat .nb {
+  flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 5px 8px; border: none; border-radius: 8px; font-size: 12px; font-weight: 650; color: var(--ink);
+  background: rgba(255,255,255,.05); transition: background .15s, box-shadow .15s, transform .1s;
+}
+.newchat .nb:hover { transform: translateY(-.5px); }
+.newchat .nb:active { transform: scale(.98); }
+.newchat .nb.claude:hover { background: rgba(217,119,87,.18); box-shadow: inset 0 0 0 1px rgba(217,119,87,.45); }
+.newchat .nb.codex:hover { background: rgba(255,255,255,.10); box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+.newchat .nbi { display: inline-flex; }
+.newchat .nb .ag.logo svg { width: 15px; height: 15px; }
+body.light .newchat { background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+body.light .newchat .nb { background: #EFEFF2; }
+body.light .newchat .nb.claude:hover { background: rgba(217,119,87,.13); box-shadow: inset 0 0 0 1px rgba(217,119,87,.5); }
+body.light .newchat .nb.codex:hover { background: rgba(0,0,0,.06); box-shadow: inset 0 0 0 1px rgba(0,0,0,.18); }
 
 /* фильтры */
 .row { margin-top: 8px; }
@@ -106,14 +140,18 @@ body.vscode-light .newbtn { background: var(--yellow); color: #333; box-shadow: 
 }
 .chip.small { padding: 1px 7px; font-size: 11px; }
 .chip.icon { padding: 2px 4px; }
+.chip .mode { display: inline-flex; margin-left: 3px; padding: 1px 3px; border-radius: 5px; background: rgba(255,255,255,.14); }
+.chip .mode .vi { width: 11px; height: 11px; }
+body.light .chip .mode { background: rgba(255,255,255,.2); }
 .chip .bolt { width: 11px; height: 11px; color: var(--warn); }
 .chip.act.on .bolt { color: var(--yellow); filter: drop-shadow(0 0 4px rgba(255,221,45,.6)); }
-body.vscode-light .chip.act .bolt { color: #FF7E16; }
-body.vscode-light .chip.act.on .bolt { color: #333; filter: none; }
+body.light .chip.act .bolt { color: #F08300; }
+body.light .chip.act.on .bolt { color: var(--yellow); filter: none; }
 .chip.icon:not(.on) .ag { opacity: .55; }
 .chip:hover { color: var(--ink); background: var(--hover); }
-.chip.on { background: var(--chip-on); color: var(--ink); border-color: transparent; }
-body.vscode-light .chip.on { color: #333; }
+.chip.on { background: var(--chip-on); color: var(--chip-on-ink); border-color: transparent; }
+body.light .chip.on b { color: inherit; }
+body.light .chip.hot.on b { color: #FF8A8E; }
 .chip b { font-weight: 650; }
 .chip.hot b { color: var(--bad); }
 
@@ -135,11 +173,14 @@ body.vscode-light .chip.on { color: #333; }
 .card:hover::before { opacity: 1; }
 .card.flat { padding: 4px 0; }
 .group.has-unread { border-color: rgba(255,69,58,.28); }
+body.light .group.has-unread { border-color: rgba(240,68,74,.35); }
+body.light .card::before { display: none; }
+body.light .chat.read .dot { opacity: .6; }
 .group.dragging { opacity: .45; transform: scale(.98); }
 .group.drop-before { box-shadow: 0 -3px 0 0 var(--a3), var(--gl-shadow); }
 .group.drop-after { box-shadow: 0 3px 0 0 var(--a3), var(--gl-shadow); }
-body.vscode-light .group.drop-before { box-shadow: 0 -3px 0 0 var(--yellow), var(--gl-shadow); }
-body.vscode-light .group.drop-after { box-shadow: 0 3px 0 0 var(--yellow), var(--gl-shadow); }
+body.light .group.drop-before { box-shadow: 0 -3px 0 0 var(--yellow), var(--gl-shadow); }
+body.light .group.drop-after { box-shadow: 0 3px 0 0 var(--yellow), var(--gl-shadow); }
 
 .gh { display: flex; align-items: center; gap: 6px; padding: 9px 8px 7px 6px; cursor: pointer; user-select: none; }
 .grip { width: 12px; color: var(--muted); opacity: 0; cursor: grab; display: inline-flex; transition: opacity .15s; }
@@ -157,8 +198,20 @@ body.vscode-light .group.drop-after { box-shadow: 0 3px 0 0 var(--yellow), var(-
 .gtime { color: var(--muted); font-size: 11px; }
 .gmore { opacity: 0; width: 20px; height: 20px; }
 .gh:hover .gmore { opacity: 1; }
+/* «+» нового чата в группе — только при наведении на группу */
+.gplus { display: none; width: auto; height: 20px; padding: 0 5px 0 3px; gap: 2px; border: 1px solid var(--gl-edge); border-radius: 6px; }
+.gh:hover .gplus { display: inline-flex; }
+.gplus svg { width: 11px; height: 11px; }
+.gplus .ag.logo svg { width: 12px; height: 12px; }
+.gplus .ag:not(.logo) { width: 12px; height: 12px; line-height: 12px; font-size: 8px; }
 .gb { padding: 0 0 6px; }
 .group.collapsed .gb { display: none; }
+.gempty { margin: 0 10px 4px 30px; padding: 10px; border: 1.5px dashed var(--gl-edge); border-radius: 9px; color: var(--muted); font-size: 11px; line-height: 1.4; text-align: center; }
+.chat.dragging-chat { opacity: .4; }
+#list.chat-drag .group { transition: box-shadow .12s, border-color .12s; }
+.group.drop-into { border-color: var(--a3) !important; box-shadow: 0 0 0 2px rgba(63,216,242,.35), var(--gl-shadow); }
+body.light .group.drop-into { border-color: #262626 !important; box-shadow: 0 0 0 2px rgba(255,221,45,.7), var(--gl-shadow); }
+body.light .gempty { border-color: rgba(0,0,0,.12); }
 .group.collapsed .gh { padding-bottom: 9px; }
 
 /* чат */
@@ -180,7 +233,7 @@ body.vscode-light .group.drop-after { box-shadow: 0 3px 0 0 var(--yellow), var(-
 }
 .chat.working .dot { background: var(--warn); animation: breathe 1.4s ease-in-out infinite; }
 .chat.unread .t { font-weight: 650; }
-.chat.read .t { color: var(--muted); }
+.chat.read .t { color: var(--read-ink); }
 .chat.arch .t { text-decoration: none; opacity: .8; }
 
 .ag {
@@ -190,6 +243,14 @@ body.vscode-light .group.drop-after { box-shadow: 0 3px 0 0 var(--yellow), var(-
 .ag.claude { background: var(--claude); }
 .ag.codex { background: var(--codex); }
 .chat.read .ag { opacity: .7; }
+.ag.logo { background: none; border-radius: 0; display: inline-flex; align-items: center; justify-content: center; }
+.ag.logo svg { width: 14px; height: 14px; display: block; }
+.ag.logo.codex { color: var(--ink); }
+.chip.on .ag.logo.codex { color: var(--chip-on-ink); }
+.chat.read .ag.logo { opacity: .8; }
+.chip.icon .ag.logo svg { width: 13px; height: 13px; }
+.chat.current { background: rgba(139,124,255,.14); box-shadow: inset 2px 0 0 var(--a3); }
+body.light .chat.current { background: rgba(255,221,45,.28); box-shadow: inset 2px 0 0 #262626; }
 .chip .ag { width: 13px; height: 13px; line-height: 13px; font-size: 8.5px; }
 
 .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -202,7 +263,7 @@ body.vscode-light .group.drop-after { box-shadow: 0 3px 0 0 var(--yellow), var(-
 .acts .ib svg { width: 14px; height: 14px; }
 .snip { flex-basis: 100%; color: var(--muted); font-size: 11px; line-height: 1.4; padding-left: 31px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 mark { background: rgba(139,124,255,.35); color: inherit; border-radius: 3px; padding: 0 1px; }
-body.vscode-light mark { background: rgba(255,221,45,.6); }
+body.light mark { background: rgba(255,221,45,.6); }
 
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @keyframes beacon { 0% { transform: scale(1); opacity: .8; } 100% { transform: scale(2.4); opacity: 0; } }

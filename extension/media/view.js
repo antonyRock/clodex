@@ -1,11 +1,25 @@
 // Страница панели Clodex.
 (function () {
   const vscode = acquireVsCodeApi();
+  // любая ошибка панели — в журнал Clodex и текстом на экран, а не пустая панель
+  function reportError(msg) {
+    try { vscode.postMessage({ type: 'clientError', message: String(msg) }); } catch {}
+    const l = document.getElementById('list');
+    if (l) l.innerHTML = '<div class="empty">Ошибка Clodex: ' + String(msg).replace(/</g, '&lt;') + '<br>Подробности — «Вид → Вывод → Clodex».</div>';
+  }
+  window.addEventListener('error', (e) => reportError((e.message || e.error) + ' @' + e.lineno + ':' + e.colno));
   const st = vscode.getState() || {};
   st.filter = st.filter || 'all'; st.q = st.q || '';
   if (!st.agents) st.agents = { claude: true, codex: true };
   const NO_GROUP = 'Без группы';
-  let items = [], collapsed = {}, order = [];
+  let items = [], collapsed = {}, order = [], icons = {}, customGroups = [], lastAgent = 'claude';
+  // Открытый чат остаётся в фильтре (даже став прочитанным), пока не откроете другой.
+  let sticky = null;
+  const keep = (i) => i.key === sticky;
+  const agName = (a) => (a === 'claude' ? 'Claude' : 'Codex');
+  const badge = (a, tip) => icons[a]
+    ? `<span class="ag logo ${a}" title="${tip || ''}">${icons[a]}</span>`
+    : `<span class="ag ${a}" title="${tip || ''}">${a === 'claude' ? 'C' : 'X'}</span>`;
   let results = null, resultQ = '';
 
   const $ = (id) => document.getElementById(id);
@@ -14,12 +28,21 @@
 
   const FILTERS = [['all', 'Все'], ['active', 'Активные'], ['recent', 'Последние'], ['unread', 'Не прочитано'], ['waiting', 'Жду ответа'], ['archive', 'Архив']];
   const FILTER_TIP = {
-    active: 'Агент работает, ответил, а вы не прочитали, или задал вопрос за последние сутки — как «Active» в Claude Code',
-    recent: '40 последних чатов одним списком', unread: 'Агент ответил, а вы не открывали',
-    waiting: 'Последний ответ агента — вопрос к вам', archive: 'Чаты, убранные в архив',
+    active: 'Агент работает, ответил, а вы не прочитали, или в чате что-то было за последние 2 часа',
+    recent: '40 последних чатов', unread: 'Агент ответил, а вы не открывали',
+    waiting: 'Последний ответ агента кончается вопросом, а вы после него не писали', archive: 'Чаты, убранные в архив',
   };
-  // как «Active» в Claude Code: работает, не прочитан или ждёт ответа (вопрос не старше суток)
-  const isActive = (i) => i.status === 'working' || i.status === 'unread' || (i.waiting && Date.now() - i.ts < 864e5);
+  // Вид каждого фильтра: по группам или списком; повторное нажатие на выбранный фильтр переключает.
+  const GROUPED_DEFAULT = { all: true, active: true, recent: false, unread: false, waiting: false, archive: false };
+  if (!st.grouped) st.grouped = { ...GROUPED_DEFAULT, recent: !!st.recentGrouped };
+  const isGrouped = (f) => (f in st.grouped ? st.grouped[f] : GROUPED_DEFAULT[f]);
+  const VIEW_ICON = {
+    groups: '<svg class="vi" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="4.5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="2" y="9" width="12" height="4.5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
+    list: '<svg class="vi" viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+  };
+  // Активные: агент работает, не прочитан или в чате что-то было за последние 2 часа
+  const ACTIVE_MS = 2 * 3600e3;
+  const isActive = (i) => i.status === 'working' || i.status === 'unread' || Date.now() - i.ts < ACTIVE_MS;
   const BOLT = '<svg class="bolt" viewBox="0 0 16 16"><path d="M9.2 1.5 3.5 9h4l-.9 5.5L12.5 7h-4z" fill="currentColor"/></svg>';
   const ICON = {
     archive: '<svg viewBox="0 0 16 16"><path d="M2 3h12v3H2zM3 6v7h10V6M6.5 8.5h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
@@ -31,6 +54,27 @@
   };
 
   const save = () => vscode.setState(st);
+
+  // ---------- тема: авто (как VS Code) → тёмная → светлая ----------
+  const THEMES = ['auto', 'dark', 'light'];
+  const THEME_NAME = { auto: 'как в VS Code', dark: 'тёмная', light: 'светлая' };
+  const THEME_ICON = {
+    auto: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg>',
+    dark: '<svg viewBox="0 0 16 16"><path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+    light: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
+  };
+  st.theme = st.theme || 'auto';
+  function applyTheme() {
+    const b = document.body;
+    const vsLight = b.classList.contains('vscode-light') || b.classList.contains('vscode-high-contrast-light');
+    b.classList.toggle('light', st.theme === 'light' || (st.theme === 'auto' && vsLight));
+    b.classList.toggle('auto', st.theme === 'auto');
+    const btn = document.getElementById('themeBtn');
+    if (btn) { btn.innerHTML = THEME_ICON[st.theme]; btn.title = 'Тема: ' + THEME_NAME[st.theme] + ' — нажмите, чтобы сменить'; }
+  }
+  // VS Code меняет класс body при смене своей темы
+  new MutationObserver(applyTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  applyTheme();
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   function ago(t) {
@@ -66,18 +110,19 @@
       active: v.filter(isActive).length,
     };
     $('filters').innerHTML =
-      FILTERS.map(([k, n]) => `<button class="chip ${k === 'active' ? 'act' : ''} ${st.filter === k ? 'on' : ''} ${(k === 'unread' || k === 'active') && cnt[k] ? 'hot' : ''}" data-f="${k}" title="${FILTER_TIP[k] || 'Все чаты по группам'}">${k === 'active' ? BOLT : ''}${n}${cnt[k] ? ` <b>${cnt[k]}</b>` : ''}</button>`).join('') +
+      FILTERS.map(([k, n]) => `<button class="chip ${k === 'active' ? 'act' : ''} ${st.filter === k ? 'on' : ''} ${(k === 'unread' || k === 'active') && cnt[k] ? 'hot' : ''}" data-f="${k}" title="${(FILTER_TIP[k] || 'Все чаты') + (st.filter === k ? '. Нажмите ещё раз — ' + (isGrouped(k) ? 'списком' : 'по группам') : '')}">${k === 'active' ? BOLT : ''}${n}${st.filter === k ? `<span class="mode" title="Сейчас ${isGrouped(k) ? 'по группам' : 'списком'} — нажмите ещё раз, чтобы ${isGrouped(k) ? 'показать списком' : 'разложить по группам'}">${isGrouped(k) ? VIEW_ICON.groups : VIEW_ICON.list}</span>` : ''}${cnt[k] ? ` <b>${cnt[k]}</b>` : ''}</button>`).join('') +
       `<span class="sep"></span>` +
-      [['claude', 'Claude', 'C'], ['codex', 'Codex', 'X']].map(([k, n, l]) => `<button class="chip small icon ${st.agents[k] ? 'on' : ''}" data-a="${k}" title="${st.agents[k] ? 'Скрыть' : 'Показать'} чаты ${n}"><span class="ag ${k}">${l}</span></button>`).join('');
-    $('sum').innerHTML = cnt.unread ? `<span class="pulse"></span>${cnt.unread} не прочитано` : 'всё прочитано';
+      [['claude', 'Claude', 'C'], ['codex', 'Codex', 'X']].map(([k, n, l]) => `<button class="chip small icon ${st.agents[k] ? 'on' : ''}" data-a="${k}" title="${st.agents[k] ? 'Скрыть' : 'Показать'} чаты ${n}">${badge(k)}</button>`).join('');
+    $('sum').innerHTML = cnt.unread ? `<span class="pulse"></span>${cnt.unread} новых` : 'всё прочитано';
+    $('sum').title = cnt.unread ? `Непрочитанных чатов: ${cnt.unread}` : '';
     $('sum').className = 'sum' + (cnt.unread ? ' hot' : '');
   }
 
   function row(i, snippet) {
     const tip = i.status === 'unread' ? 'Не прочитан — нажмите, чтобы отметить прочитанным' : i.status === 'working' ? 'Агент работает' : 'Прочитан — нажмите, чтобы вернуть «не прочитано»';
-    return `<div class="chat ${i.status} ${i.archived ? 'arch' : ''}" data-k="${esc(i.key)}" title="${esc(i.title)}">
+    return `<div draggable="true" class="chat ${i.status} ${i.archived ? 'arch' : ''} ${i.key === sticky ? 'current' : ''}" data-k="${esc(i.key)}" title="${esc(i.title)}">
       <span class="dot" data-dot="1" title="${tip}"></span>
-      <span class="ag ${i.agent}" title="${i.agent === 'claude' ? 'Чат Claude' : 'Чат Codex'}">${i.agent === 'claude' ? 'C' : 'X'}</span>
+      ${badge(i.agent, 'Чат ' + agName(i.agent))}
       <span class="t">${resultQ && snippet !== undefined ? mark(i.title, resultQ) : esc(i.title)}${i.waiting ? '<span class="q" title="Агент задал вопрос и ждёт ответа">?</span>' : ''}</span>
       <span class="time" data-ts="${i.ts}">${ago(i.ts)}</span>
       <span class="acts">
@@ -92,13 +137,15 @@
   // Тот же порядок, что считает расширение: сохранённый, затем по свежести, «Без группы» в конце.
   function groupOrder(groups) {
     const names = [...groups.keys()];
-    const rest = names.filter((g) => !order.includes(g) && g !== NO_GROUP).sort((a, b) => groups.get(b)[0].ts - groups.get(a)[0].ts);
+    const t = (g) => (groups.get(g)[0] ? groups.get(g)[0].ts : 0);
+    const rest = names.filter((g) => !order.includes(g) && g !== NO_GROUP).sort((a, b) => t(b) - t(a));
     const out = [...order.filter((g) => groups.has(g)), ...rest];
     if (groups.has(NO_GROUP) && !out.includes(NO_GROUP)) out.push(NO_GROUP);
     return out;
   }
 
-  function render() {
+  function render() { try { render_(); } catch (e) { reportError(e && e.stack || e); } }
+  function render_() {
     renderFilters();
     if (results) {
       const map = new Map(results.map((r) => [r.key, r.snippet]));
@@ -108,19 +155,21 @@
       return;
     }
     let v = (st.filter === 'archive' ? items.filter((i) => i.archived && byAgent(i)) : live()).sort((a, b) => b.ts - a.ts);
-    if (st.filter === 'unread') v = v.filter((i) => i.status === 'unread');
-    if (st.filter === 'active') v = v.filter(isActive);
-    if (st.filter === 'waiting') v = v.filter((i) => i.waiting);
+    if (st.filter === 'unread') v = v.filter((i) => i.status === 'unread' || keep(i));
+    if (st.filter === 'active') v = v.filter((i) => isActive(i) || keep(i));
+    if (st.filter === 'waiting') v = v.filter((i) => i.waiting || keep(i));
     if (st.filter === 'recent') v = v.slice(0, 40);
     if (!v.length) {
       const msg = { unread: 'Всё прочитано', waiting: 'Никто не ждёт ответа', archive: 'Архив пуст', active: 'Активных нет: никто не работает, не ждёт и не ответил' }[st.filter] || 'Чатов нет';
       list.innerHTML = `<div class="empty">${msg}</div>`;
       return;
     }
-    if (st.filter !== 'all' && st.filter !== 'active') { list.innerHTML = `<div class="card flat">${v.map((i) => row(i)).join('')}</div>`; return; }
+    const grouped = isGrouped(st.filter);
+    if (!grouped) { list.innerHTML = `<div class="card flat">${v.map((i) => row(i)).join('')}</div>`; return; }
 
     const groups = new Map();
     for (const i of v) { if (!groups.has(i.group)) groups.set(i.group, []); groups.get(i.group).push(i); }
+    if (st.filter === 'all') for (const g of customGroups) if (!groups.has(g)) groups.set(g, []); // пустые свои группы — только во «Все»
     list.innerHTML = groupOrder(groups).map((g) => {
       const arr = groups.get(g);
       const un = arr.filter((i) => i.status === 'unread').length;
@@ -133,17 +182,23 @@
           <span class="gn">${esc(g)}</span>
           ${work ? '<span class="gwork" title="Агент работает"></span>' : ''}
           ${un ? `<span class="gun" title="Непрочитанных: ${un}">${un}</span>` : ''}
-          <span class="gtime">${ago(arr[0].ts)}</span>
+          <span class="gtime">${arr[0] ? ago(arr[0].ts) : ''}</span>
+          <button class="ib gplus" data-gplus="1" title="Новый чат ${agName(lastAgent)} в группе «${esc(g)}»"><svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>${badge(lastAgent)}</button>
           <button class="ib gmore" data-gmore="1" title="Группа: порядок, переименовать, удалить">${ICON.more}</button>
         </div>
-        <div class="gb">${arr.map((i) => row(i)).join('')}</div></div>`;
-    }).join('');
+        <div class="gb">${arr.length ? arr.map((i) => row(i)).join('') : '<div class="gempty">Пусто. Перетащите сюда чат мышью — или «⋯» у чата → «Перенести в группу».</div>'}</div></div>`;
+    }).join('') + (st.filter === 'all' ? '<button class="addgroup" data-addgroup="1">＋ Новая группа</button>' : '');
   }
 
   // ---------- нажатия ----------
   document.addEventListener('click', (e) => {
     const f = e.target.closest('[data-f]');
-    if (f) { st.filter = f.dataset.f; if (results) { q.value = ''; onSearch(); } save(); render(); return; }
+    if (f) {
+      if (f.dataset.f === st.filter) st.grouped[st.filter] = !isGrouped(st.filter); // повторное нажатие — группы / список
+      st.filter = f.dataset.f;
+      if (results) { q.value = ''; onSearch(); }
+      save(); render(); return;
+    }
     const a = e.target.closest('[data-a]');
     if (a) {
       const k = a.dataset.a, other = k === 'claude' ? 'codex' : 'claude';
@@ -151,8 +206,12 @@
       if (!st.agents[k] && !st.agents[other]) st.agents[other] = true; // хотя бы один агент виден
       save(); render(); return;
     }
+    if (e.target.closest('#newGroup') || e.target.closest('[data-addgroup]')) { vscode.postMessage({ type: 'newGroup' }); return; }
+    if (e.target.closest('#themeBtn')) { st.theme = THEMES[(THEMES.indexOf(st.theme) + 1) % 3]; save(); applyTheme(); return; }
     if (e.target.closest('#expandAll')) { vscode.postMessage({ type: 'collapseAll', value: false }); return; }
     if (e.target.closest('#collapseAll')) { vscode.postMessage({ type: 'collapseAll', value: true }); return; }
+    const gp = e.target.closest('[data-gplus]');
+    if (gp) { vscode.postMessage({ type: 'new', agent: 'last', group: gp.closest('.gh').dataset.g }); return; }
     const gm = e.target.closest('[data-gmore]');
     if (gm) { vscode.postMessage({ type: 'groupMenu', group: gm.closest('.gh').dataset.g }); return; }
     const gh = e.target.closest('.gh');
@@ -169,7 +228,12 @@
     else if (e.target.closest('[data-arch]')) { ch.classList.add('leaving'); setTimeout(() => vscode.postMessage({ type: 'archive', key: k }), 180); }
     else if (e.target.closest('[data-more]')) vscode.postMessage({ type: 'menu', key: k });
     else if (e.target.closest('[data-ren]')) vscode.postMessage({ type: 'rename', key: k });
-    else vscode.postMessage({ type: 'open', key: k });
+    else {
+      sticky = k;
+      list.querySelectorAll('.chat.current').forEach((x) => x.classList.remove('current'));
+      ch.classList.add('current');
+      vscode.postMessage({ type: 'open', key: k });
+    }
   });
   document.addEventListener('contextmenu', (e) => {
     const ch = e.target.closest('.chat');
@@ -177,11 +241,20 @@
     const gh = e.target.closest('.gh');
     if (gh) { e.preventDefault(); vscode.postMessage({ type: 'groupMenu', group: gh.dataset.g }); }
   });
-  $('newChat').onclick = () => vscode.postMessage({ type: 'new' });
+  document.querySelectorAll('[data-new]').forEach((b) => { b.onclick = () => vscode.postMessage({ type: 'new', agent: b.dataset.new }); });
 
   // ---------- перетаскивание групп ----------
-  let dragG = null;
+  let dragG = null, dragK = null;
   list.addEventListener('dragstart', (e) => {
+    const chat = e.target.closest('.chat');
+    if (chat) { // чат тащат в другую группу
+      dragK = chat.dataset.k;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', dragK);
+      chat.classList.add('dragging-chat');
+      list.classList.add('chat-drag');
+      return;
+    }
     const gh = e.target.closest('.gh');
     if (!gh) return;
     dragG = gh.dataset.g;
@@ -190,6 +263,14 @@
     gh.parentElement.classList.add('dragging');
   });
   list.addEventListener('dragover', (e) => {
+    if (dragK) {
+      const card = e.target.closest('.group');
+      list.querySelectorAll('.drop-into').forEach((x) => x !== card && x.classList.remove('drop-into'));
+      if (!card) return;
+      e.preventDefault();
+      card.classList.add('drop-into');
+      return;
+    }
     if (!dragG) return;
     const card = e.target.closest('.group');
     if (!card || card.dataset.g === dragG) return;
@@ -200,6 +281,14 @@
     card.classList.add(after ? 'drop-after' : 'drop-before');
   });
   list.addEventListener('drop', (e) => {
+    if (dragK) {
+      e.preventDefault();
+      const card = e.target.closest('.group');
+      const it = items.find((i) => i.key === dragK);
+      if (card && it && it.group !== card.dataset.g) vscode.postMessage({ type: 'move', key: dragK, group: card.dataset.g });
+      endDrag();
+      return;
+    }
     if (!dragG) return;
     e.preventDefault();
     const card = e.target.closest('.group');
@@ -215,8 +304,9 @@
   });
   list.addEventListener('dragend', endDrag);
   function endDrag() {
-    dragG = null;
-    list.querySelectorAll('.dragging,.drop-before,.drop-after').forEach((x) => x.classList.remove('dragging', 'drop-before', 'drop-after'));
+    dragG = null; dragK = null;
+    list.classList.remove('chat-drag');
+    list.querySelectorAll('.dragging,.drop-before,.drop-after,.drop-into,.dragging-chat').forEach((x) => x.classList.remove('dragging', 'drop-before', 'drop-after', 'drop-into', 'dragging-chat'));
     render();
   }
 
@@ -245,7 +335,8 @@
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (m.type === 'data') {
-      items = m.items; collapsed = m.collapsed || {}; order = m.order || [];
+      items = m.items; collapsed = m.collapsed || {}; order = m.order || []; icons = m.icons || {}; customGroups = m.customGroups || []; lastAgent = m.lastAgent || 'claude';
+      document.querySelectorAll('[data-new] .nbi').forEach((b) => { b.innerHTML = badge(b.parentElement.dataset.new); });
       if (!dragG) render();
     }
     if (m.type === 'results') {

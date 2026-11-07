@@ -2,7 +2,7 @@
   "name": "clodex",
   "displayName": "Clodex",
   "description": "Чаты Claude Code и Codex в одном списке: поиск по тексту, непрочитанные, фильтры.",
-  "version": "0.4.0",
+  "version": "0.6.4",
   "publisher": "clodex",
   "private": true,
   "engines": {
@@ -51,6 +51,11 @@
         "icon": "$(add)"
       },
       {
+        "command": "clodex.newGroup",
+        "title": "Clodex: Новая группа",
+        "icon": "$(new-folder)"
+      },
+      {
         "command": "clodex.refresh",
         "title": "Clodex: Обновить список",
         "icon": "$(refresh)"
@@ -77,11 +82,6 @@
     ],
     "menus": {
       "view/title": [
-        {
-          "command": "clodex.newChat",
-          "when": "view == clodex.chats",
-          "group": "navigation@0"
-        },
         {
           "command": "clodex.markAllRead",
           "when": "view == clodex.chats",

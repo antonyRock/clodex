@@ -22,13 +22,19 @@ async function migrate(context) {
   for (const k of STATE_KEYS) if (k in old) await context.globalState.update(k, old[k]);
 }
 
+let log = { info() {}, error() {} };
+
 async function activate(context) {
+  log = vscode.window.createOutputChannel('Clodex', { log: true });
+  context.subscriptions.push(log);
+  log.info('Clodex ' + (context.extension && context.extension.packageJSON.version) + ' запускается');
   try { await migrate(context); } catch (e) { console.error('Clodex: migrate', e); }
   const provider = new ClodexView(context);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('clodex.chats', provider, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.commands.registerCommand('clodex.refresh', () => provider.refresh(true)),
     vscode.commands.registerCommand('clodex.newChat', () => provider.newChat()),
+    vscode.commands.registerCommand('clodex.newGroup', () => provider.newGroup()),
     vscode.commands.registerCommand('clodex.expandAll', () => provider.setAllCollapsed(false)),
     vscode.commands.registerCommand('clodex.collapseAll', () => provider.setAllCollapsed(true)),
     vscode.commands.registerCommand('clodex.markAllRead', () => provider.markAllRead()),
@@ -38,6 +44,7 @@ async function activate(context) {
     }),
   );
   provider.start();
+  log.info('Clodex запущен');
 }
 
 class ClodexView {
@@ -104,6 +111,7 @@ class ClodexView {
       this.scanner.dirty = before || changed;
       this.byKey = new Map(this.chats.map((c) => [c.key, c]));
       this._manualMap = null;
+      await this.placePending();
       await this.initSeen();
       this.markActiveTabs(true);
       if (changed || force) this.push();
@@ -251,11 +259,31 @@ class ClodexView {
   push() {
     const items = this.payload();
     this.updateBadge(items);
-    this.post({ type: 'data', items, collapsed: this.gs.get('collapsed', {}), order: this.gs.get('groupOrder', []) });
+    this.post({ type: 'data', items, collapsed: this.gs.get('collapsed', {}), order: this.gs.get('groupOrder', []), icons: this.agentIcons(), customGroups: this.customGroups, lastAgent: this.gs.get('lastAgent', 'claude') });
     if (this.lastQuery) this.post({ type: 'results', q: this.lastQuery, results: search(this.chats, this.lastQuery, this.gs.get('titles', {})) });
   }
 
   post(m) { if (this.view) this.view.webview.postMessage(m); }
+
+  // Логотипы агентов берутся из установленных расширений Claude Code и Codex — в Clodex их нет.
+  agentIcons() {
+    if (this._icons) return this._icons;
+    const src = { claude: ['anthropic.claude-code', 'resources/claude-logo.svg'], codex: ['openai.chatgpt', 'resources/blossom-white.svg'] };
+    const out = {};
+    for (const [agent, [id, rel]] of Object.entries(src)) {
+      try {
+        const ext = vscode.extensions.getExtension(id);
+        if (!ext) continue;
+        let svg = fs.readFileSync(path.join(ext.extensionPath, rel), 'utf8');
+        svg = svg.replace(/<\?xml[^>]*>/g, '').replace(/<title>[\s\S]*?<\/title>/g, '')
+          .replace(/<script[\s\S]*?<\/script>/gi, '').replace(/\son\w+="[^"]*"/gi, '')
+          .replace(/\s(width|height|style)="[^"]*"/g, '');
+        if (agent === 'codex') svg = svg.replace(/fill="white"/g, 'fill="currentColor"');
+        if (/^\s*<svg[\s\S]*<\/svg>\s*$/.test(svg)) out[agent] = svg.trim();
+      } catch {}
+    }
+    return (this._icons = out);
+  }
 
   async markAllRead() {
     const s = this.seen;
@@ -281,7 +309,9 @@ class ClodexView {
     }
   }
 
-  async newChat(agent) {
+  // group — создать чат сразу в группе: первый новый чат этого агента за 3 минуты попадёт туда
+  async newChat(agent, group) {
+    if (agent === 'last') agent = this.gs.get('lastAgent', 'claude');
     if (!agent) {
       const p = await vscode.window.showQuickPick([
         { label: '$(sparkle) Claude', description: 'новый чат Claude Code', id: 'claude' },
@@ -290,6 +320,9 @@ class ClodexView {
       if (!p) return;
       agent = p.id;
     }
+    await this.gs.update('lastAgent', agent);
+    if (group) this.pending = { group, agent, t: Date.now(), known: new Set(this.chats.map((c) => c.key)) };
+    this.push();
     try {
       if (agent === 'codex') await vscode.commands.executeCommand('chatgpt.newCodexPanel');
       else await vscode.commands.executeCommand('claude-vscode.newConversation');
@@ -320,7 +353,7 @@ class ClodexView {
       await this.ctx.globalState.update('groupOverride', o);
     }
     if (pick.id === 'group') {
-      const names = [...new Set(this.chats.map((x) => this.groupOf(x)))].sort();
+      const names = [...new Set([...this.chats.map((x) => this.groupOf(x)), ...this.customGroups])].sort();
       const g = await vscode.window.showQuickPick(
         [{ label: '$(add) Новая группа…', id: '' }, ...names.map((n) => ({ label: n, id: n }))],
         { placeHolder: `Группа для «${c.title}»` });
@@ -329,6 +362,45 @@ class ClodexView {
       if (!name) name = (await vscode.window.showInputBox({ prompt: 'Название группы' }) || '').trim();
       if (!name) return;
       await this.ctx.globalState.update('groupOverride', { ...this.groupOverride, [key]: name });
+    }
+    this.push();
+  }
+
+  get customGroups() { return this.gs.get('customGroups', []); }
+
+  async placePending() {
+    const p = this.pending;
+    if (!p) return;
+    if (Date.now() - p.t > 3 * 60 * 1000) { this.pending = null; return; }
+    const fresh = this.chats.find((c) => !p.known.has(c.key) && c.agent === p.agent);
+    if (!fresh) return;
+    this.pending = null;
+    await this.gs.update('groupOverride', { ...this.groupOverride, [fresh.key]: p.group });
+    log.info(`новый чат положен в группу «${p.group}»`);
+    this.push();
+  }
+
+  async newGroup() {
+    const name = ((await vscode.window.showInputBox({ prompt: 'Название новой группы', placeHolder: 'Например: Отпуск, Inpas, Сайт' })) || '').trim();
+    if (!name) return;
+    const exists = this.customGroups.includes(name) || this.chats.some((c) => this.groupOf(c) === name);
+    if (exists) { vscode.window.showInformationMessage(`Группа «${name}» уже есть.`); return; }
+    await this.gs.update('customGroups', [...this.customGroups, name]);
+    const d = { ...this.gs.get('dissolved', {}) }; delete d[name]; await this.gs.update('dissolved', d);
+    await this.gs.update('groupOrder', [name, ...this.currentOrder().filter((g) => g !== name)]);
+    this.push();
+  }
+
+  async moveToGroup(key, name) {
+    if (!this.byKey.has(key) || !name) return;
+    if (name === NO_GROUP) {
+      const o = { ...this.groupOverride }; delete o[key];
+      await this.gs.update('groupOverride', o);
+      const c = this.byKey.get(key);
+      if (this.groupOf(c) !== NO_GROUP) await this.gs.update('groupOverride', { ...o, [key]: NO_GROUP });
+    } else {
+      await this.gs.update('groupOverride', { ...this.groupOverride, [key]: name });
+      const d = { ...this.gs.get('dissolved', {}) }; delete d[name]; await this.gs.update('dissolved', d);
     }
     this.push();
   }
@@ -354,6 +426,7 @@ class ClodexView {
       await this.gs.update('groupAlias', { ...this.gs.get('groupAlias', {}), [name]: nn });
       const d = { ...this.gs.get('dissolved', {}) }; delete d[nn]; await this.gs.update('dissolved', d);
       await this.gs.update('groupOrder', this.gs.get('groupOrder', []).map((g) => (g === name ? nn : g)));
+      await this.gs.update('customGroups', [...new Set(this.customGroups.map((g) => (g === name ? nn : g)))]);
     }
     if (p.id === 'del') {
       const ok = await vscode.window.showWarningMessage(`Удалить группу «${name}»? Чатов в ней: ${members.length}. Чаты не удаляются — перейдут в «Без группы».`, { modal: true }, 'Удалить группу');
@@ -364,6 +437,7 @@ class ClodexView {
       await this.gs.update('groupOverride', o);
       await this.gs.update('dissolved', { ...this.gs.get('dissolved', {}), [name]: true });
       await this.gs.update('groupOrder', this.gs.get('groupOrder', []).filter((g) => g !== name));
+      await this.gs.update('customGroups', this.customGroups.filter((g) => g !== name));
     }
     if (p.id === 'archiveAll') {
       const a = { ...this.gs.get('archived', {}) };
@@ -382,6 +456,7 @@ class ClodexView {
       const g = this.groupOf(c);
       last.set(g, Math.max(last.get(g) || 0, c.lastTs));
     }
+    for (const g of this.customGroups) if (!last.has(g)) last.set(g, 0);
     const rest = [...last.keys()].filter((g) => !saved.includes(g) && g !== NO_GROUP).sort((a, b) => last.get(b) - last.get(a));
     const out = [...saved.filter((g) => last.has(g)), ...rest];
     if (last.has(NO_GROUP) && !out.includes(NO_GROUP)) out.push(NO_GROUP);
@@ -409,23 +484,31 @@ class ClodexView {
 <div id="grid"></div>
 <div id="top">
   <div class="brand"><span class="word">Clodex</span><span class="sq"></span><span id="sum" class="sum"></span>
-    <span class="tools"><button id="expandAll" class="ib" title="Раскрыть все группы"><svg viewBox="0 0 16 16"><path d="M4 4l4 3.5L12 4M4 8.5 8 12l4-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button id="collapseAll" class="ib" title="Свернуть все группы"><svg viewBox="0 0 16 16"><path d="M4 7.5 8 4l4 3.5M4 12l4-3.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span></div>
+    <span class="tools"><button id="newGroup" class="ib pill" title="Создать новую группу"><svg viewBox="0 0 16 16"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.5h5.6c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7v4M6 9h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>Группа</button><button id="themeBtn" class="ib" title="Тема"></button><button id="expandAll" class="ib" title="Раскрыть все группы"><svg viewBox="0 0 16 16"><path d="M4 4l4 3.5L12 4M4 8.5 8 12l4-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button id="collapseAll" class="ib" title="Свернуть все группы"><svg viewBox="0 0 16 16"><path d="M4 7.5 8 4l4 3.5M4 12l4-3.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span></div>
   <div class="searchbox"><input id="q" type="search" placeholder="Поиск по тексту чатов…" spellcheck="false">
-    <button id="newChat" class="newbtn" title="Новый чат Claude или Codex">＋ Новый чат</button></div>
+  </div>
+  <div class="newchat">
+    <span class="nl"><svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Новый чат:</span>
+    <button class="nb claude" data-new="claude" title="Начать новый чат с Claude"><span class="nbi"><span class="ag claude">C</span></span>Claude</button>
+    <button class="nb codex" data-new="codex" title="Начать новый чат с Codex"><span class="nbi"><span class="ag codex">X</span></span>Codex</button>
+  </div>
   <div class="row"><div id="filters"></div></div>
 </div>
 <div id="list"></div>
 <script nonce="${nonce}" src="${js}"></script></body></html>`;
     view.webview.onDidReceiveMessage(async (m) => {
-      if (m.type === 'ready') this.push();
+      if (m.type === 'ready') { log.info('панель открыта'); this.push(); }
+      if (m.type === 'clientError') { log.error('ошибка в панели: ' + m.message); }
       if (m.type === 'open') this.open(m.key);
       if (m.type === 'menu') this.menu(m.key);
       if (m.type === 'groupMenu') this.groupMenu(m.group);
       if (m.type === 'rename') this.rename(m.key);
+      if (m.type === 'newGroup') this.newGroup();
+      if (m.type === 'move') this.moveToGroup(m.key, m.group);
       if (m.type === 'archive') { const c = this.byKey.get(m.key); if (c) this.setArchived(m.key, !this.isArchived(c)); }
       if (m.type === 'order') { await this.gs.update('groupOrder', m.order); this.push(); }
       if (m.type === 'collapseAll') this.setAllCollapsed(m.value);
-      if (m.type === 'new') this.newChat(m.agent);
+      if (m.type === 'new') this.newChat(m.agent, m.group);
       if (m.type === 'toggleRead') {
         const c = this.byKey.get(m.key);
         if (c) { await this.setSeen(m.key, this.isUnread(c) ? Date.now() : 0); this.push(); }
