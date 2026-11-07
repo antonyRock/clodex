@@ -9,7 +9,7 @@ const BG_GROUP = 'Фоновые'; // сессии `claude -p` (ночные з�
 // Реестр проектов рабочей папки агента: ярлык ~/Claude_AI ставит комплект установки.
 const REGISTRY = path.join(HOME, 'Claude_AI', '03_Проекты', '00_Реестр проектов.md');
 // При первом запуске переносится состояние прежней сборки Clodex с другим издателем (<кто-то>.clodex).
-const STATE_KEYS = ['initialized', 'seen', 'groupOverride', 'groupAlias', 'dissolved', 'groupOrder', 'collapsed', 'archived', 'titles', 'favorites'];
+const STATE_KEYS = ['initialized', 'seen', 'groupOverride', 'groupAlias', 'dissolved', 'groupOrder', 'collapsed', 'archived', 'titles', 'favorites', 'favChats'];
 
 const WORKING_MS = 3 * 60 * 1000;  // файл менялся недавно и ответа нет — агент работает
 const POLL_VISIBLE = 4000;
@@ -278,7 +278,7 @@ class ClodexView {
   push() {
     const items = this.payload();
     this.updateBadge(items);
-    this.post({ type: 'data', items, collapsed: this.gs.get('collapsed', {}), order: this.gs.get('groupOrder', []), icons: this.agentIcons(), installed: this.installed(), customGroups: this.customGroups, favorites: this.gs.get('favorites', {}), lastAgent: this.gs.get('lastAgent', 'claude') });
+    this.post({ type: 'data', items, collapsed: this.gs.get('collapsed', {}), order: this.gs.get('groupOrder', []), icons: this.agentIcons(), installed: this.installed(), customGroups: this.customGroups, favorites: this.gs.get('favorites', {}), favChats: this.gs.get('favChats', {}), lastAgent: this.gs.get('lastAgent', 'claude') });
     if (this.lastQuery) this.post({ type: 'results', q: this.lastQuery, results: search(this.chats, this.lastQuery, this.gs.get('titles', {})) });
     if (!this._currentSent) { this._currentSent = true; this.postCurrent(true); } // один раз после первой загрузки
   }
@@ -589,6 +589,11 @@ class ClodexView {
       if (m.type === 'rename') this.rename(m.key);
       if (m.type === 'newGroup') this.newGroup();
       if (m.type === 'move') this.moveToGroup(m.key, m.group);
+      if (m.type === 'favChat') {
+        const f = { ...this.gs.get('favChats', {}) };
+        if (m.value) f[m.key] = true; else delete f[m.key];
+        await this.gs.update('favChats', f); this.push();
+      }
       if (m.type === 'favGroup') {
         const f = { ...this.gs.get('favorites', {}) };
         if (m.value) f[m.group] = true; else delete f[m.group];
