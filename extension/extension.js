@@ -2,10 +2,12 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
-const { Scanner, search, isQuestion, loadRegistry, autoGroup, readVsState, HOME, claudeTranscript } = require('./data.js');
+const { Scanner, search, isQuestion, loadRegistry, autoGroup, readVsState, HOME, claudeTranscript, codexTranscript, listJobs } = require('./data.js');
 
 const NO_GROUP = 'Без группы';
-const BG_GROUP = 'Фоновые'; // сессии `claude -p` (ночные задачи сервера)
+const BG_GROUP = 'Фоновые'; // сессии `claude -p` и `codex exec` (ночные задачи сервера, бот)
+const JOBS_ROOT = path.join(HOME, 'Claude_AI');
+const JOBS_TTL = 30 * 1000; // контрольные точки задач перечитываем не чаще раза в 30 с
 // Реестр проектов рабочей папки агента: ярлык ~/Claude_AI ставит комплект установки.
 const REGISTRY = path.join(HOME, 'Claude_AI', '03_Проекты', '00_Реестр проектов.md');
 // При первом запуске переносится состояние прежней сборки Clodex с другим издателем (<кто-то>.clodex).
@@ -58,7 +60,7 @@ class ClodexView {
     this.view = null;
     this.chats = [];
     this.byKey = new Map();
-    this.cacheFile = path.join(context.globalStorageUri.fsPath, 'cache-v4.json');
+    this.cacheFile = path.join(context.globalStorageUri.fsPath, 'cache-v5.json');
     this.scanner = new Scanner(this.loadCache());
     this.scanning = false;
     this.lastQuery = '';
@@ -129,6 +131,7 @@ class ClodexView {
       await this.placePending();
       await this.initSeen();
       this.markActiveTabs(true);
+      if (changed && this._currentSent) this.postCurrent(); // новый чат получил название — подсветить его
       if (changed || force) this.push();
       else this.updateBadge(); // время «N мин» обновляет сама страница
     } catch (e) {
@@ -152,7 +155,13 @@ class ClodexView {
     if (!t || !(t.input instanceof vscode.TabInputWebview) || !t.input.viewType.includes('claudeVSCodePanel')) return;
     const c = (this.chats || []).filter((x) => x.agent === 'claude' && x.title === t.label)
       .sort((a, b) => (b.mtime || 0) - (a.mtime || 0))[0];
-    if (c && (force || c.key !== this._current)) {
+    // Новый чат: у вкладки ещё нет названия или история не дочитана — снимаем старую подсветку,
+    // следующий опрос (раз в 4 с) найдёт чат по названию и подсветит его.
+    if (!c) {
+      if (this._current) { this._current = null; this.post({ type: 'current', key: null }); }
+      return;
+    }
+    if (force || c.key !== this._current) {
       const switched = this._current && c.key !== this._current;
       this._current = c.key; this.post({ type: 'current', key: c.key });
       if (switched && vscode.window.state.focused && c.key in this.manualUnread) this.setRead(c.key, true).then(() => this.push());
@@ -292,12 +301,47 @@ class ClodexView {
   push() {
     const items = this.payload();
     this.updateBadge(items);
-    this.post({ type: 'data', items, collapsed: this.gs.get('collapsed', {}), order: this.gs.get('groupOrder', []), icons: this.agentIcons(), installed: this.installed(), customGroups: this.customGroups, favorites: this.gs.get('favorites', {}), favChats: this.gs.get('favChats', {}), lastAgent: this.gs.get('lastAgent', 'claude') });
+    this.post({ type: 'data', items, jobs: this.jobs().filter((j) => j.running).map((j) => j.name), collapsed: this.gs.get('collapsed', {}), order: this.gs.get('groupOrder', []), icons: this.agentIcons(), installed: this.installed(), customGroups: this.customGroups, favorites: this.gs.get('favorites', {}), favChats: this.gs.get('favChats', {}), lastAgent: this.gs.get('lastAgent', 'claude') });
     if (this.lastQuery) this.post({ type: 'results', q: this.lastQuery, results: search(this.chats, this.lastQuery, this.gs.get('titles', {})) });
     if (!this._currentSent) { this._currentSent = true; this.postCurrent(true); } // один раз после первой загрузки
   }
 
   post(m) { if (this.view) this.view.webview.postMessage(m); }
+
+  // Фоновые задачи сервера по контрольным точкам (в т.ч. те, чьи чаты не сохраняются — `codex exec --ephemeral`).
+  jobs() {
+    if (!this._jobs || Date.now() - this._jobsAt > JOBS_TTL) {
+      try { this._jobs = listJobs(JOBS_ROOT); } catch (e) { this._jobs = []; }
+      this._jobsAt = Date.now();
+    }
+    return this._jobs;
+  }
+
+  // Клик по «Агент N»: что сейчас работает на сервере — задачи и фоновые чаты; выбор открывает ход задачи или протокол.
+  async showAgents() {
+    this._jobsAt = 0;
+    const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'только что' : m < 60 ? `${m} мин назад` : `${Math.round(m / 60)} ч назад`; };
+    const jobs = this.jobs().filter((j) => j.running);
+    const bg = this.chats.filter((c) => c.background && this.status_(c) === 'working' && !jobs.some((j) => this.titleOf(c).startsWith(j.name)));
+    const recent = this.chats.filter((c) => c.background && this.status_(c) !== 'working' && Date.now() - (c.mtime || 0) < 24 * 3600e3)
+      .sort((a, b) => (b.mtime || 0) - (a.mtime || 0)).slice(0, 8);
+    const items = [];
+    if (jobs.length || bg.length) items.push({ label: 'Работает сейчас', kind: vscode.QuickPickItemKind.Separator });
+    for (const j of jobs) items.push({ label: `$(sync~spin) ${j.name}`, description: [j.batch ? `партия ${j.batch}` : '', j.progress].filter(Boolean).join(' · '), detail: `обновлено ${ago(j.mtime)} — открыть ход задачи`, job: j });
+    for (const c of bg) items.push({ label: `$(sync~spin) ${this.titleOf(c)}`, description: c.agent === 'codex' ? 'Codex' : 'Claude', detail: 'открыть протокол', key: c.key });
+    if (!jobs.length && !bg.length) items.push({ label: '$(check) Сейчас фоновых задач нет', description: 'данные с сервера приходят через синхронизацию' });
+    if (recent.length) {
+      items.push({ label: 'За сутки', kind: vscode.QuickPickItemKind.Separator });
+      for (const c of recent) items.push({ label: this.titleOf(c), description: `${c.agent === 'codex' ? 'Codex' : 'Claude'} · ${ago(c.mtime)}`, key: c.key });
+    }
+    items.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
+    items.push({ label: '$(list-unordered) Все фоновые чаты', all: true });
+    const pick = await vscode.window.showQuickPick(items, { title: 'Агент на сервере', placeHolder: 'Что делает агент без вас' });
+    if (!pick) return;
+    if (pick.job) return vscode.commands.executeCommand(/\.md$/.test(pick.job.log) ? 'markdown.showPreview' : 'vscode.open', vscode.Uri.file(pick.job.log));
+    if (pick.key) return this.open(pick.key);
+    if (pick.all) this.post({ type: 'filter', filter: 'bg' });
+  }
 
   // Какие агенты установлены в VS Code. Нет расширения — его кнопки в панели неактивны.
   installed() {
@@ -368,7 +412,7 @@ class ClodexView {
       const dir = path.join(this.ctx.globalStorageUri.fsPath, 'transcripts');
       fs.mkdirSync(dir, { recursive: true });
       const file = path.join(dir, `${c.id}.md`);
-      fs.writeFileSync(file, claudeTranscript(content, this.titleOf(c)));
+      fs.writeFileSync(file, (c.agent === 'codex' ? codexTranscript : claudeTranscript)(content, this.titleOf(c)));
       await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(file));
     } catch (e) {
       vscode.window.showErrorMessage(`Clodex: не удалось открыть протокол «${c.title}»: ${e.message || e}`);
@@ -631,10 +675,12 @@ class ClodexView {
 <link rel="stylesheet" href="${css}"></head><body>
 <div id="grid"></div>
 <div id="top">
-  <div class="brand"><span class="word">Clodex</span><span class="sq"></span><button id="sum" class="sum"></button>
-    <span class="tools"><button id="newGroup" class="ib" title="Создать новую группу"><svg viewBox="0 0 16 16"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.5h5.6c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7v4M6 9h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button><button id="themeBtn" class="ib" title="Светлая / тёмная тема VS Code"></button><button id="foldAll" class="ib"></button><button id="agentsBtn" class="ib" title="Чьи чаты показывать: Claude / Codex"><svg viewBox="0 0 16 16"><path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.2V8.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button></span></div>
-  <div class="searchbox"><input id="q" type="search" placeholder="Поиск по тексту чатов…" spellcheck="false"><button class="nb claude" data-new="claude" title="Новый чат с Claude"><svg class="pl" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="nbi"><span class="ag claude">C</span></span></button><button class="nb codex" data-new="codex" title="Новый чат с Codex"><svg class="pl" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="nbi"><span class="ag codex">X</span></span></button></div>
+  <div class="brand"><span class="word">Clodex</span><span class="sq"></span><button id="sum" class="sum"></button><button id="agentBadge" class="agentb" hidden></button>
+    <span class="tools"><button id="newGroup" class="ib" title="Создать новую группу"><svg viewBox="0 0 16 16"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.5h5.6c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7v4M6 9h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button><button id="themeBtn" class="ib" title="Светлая / тёмная тема VS Code"></button><button id="foldAll" class="ib"></button><button id="agentsBtn" class="ib" title="Фильтр: Claude / Codex, архив"><svg viewBox="0 0 16 16"><path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.2V8.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button></span></div>
+  <div class="searchbox"><input id="q" type="search" placeholder="Поиск по тексту чатов…" spellcheck="false"></div>
+  <div class="newrow"><button class="nbig claude" data-new="claude" title="Новый чат с Claude"><span class="nbi"><span class="ag claude">C</span></span><span class="nbt">Claude</span><span class="nbp">+</span></button><button class="nbig codex" data-new="codex" title="Новый чат с Codex"><span class="nbi"><span class="ag codex">X</span></span><span class="nbt">Codex</span><span class="nbp">+</span></button></div>
   <div class="row"><div id="filters"></div></div>
+  <div id="agentsMenu" class="pop" hidden></div>
 </div>
 <div id="list"></div>
 <script nonce="${nonce}" src="${js}"></script></body></html>`;
@@ -643,6 +689,7 @@ class ClodexView {
       if (m.type === 'toggleVsTheme') this.toggleVsTheme();
       if (m.type === 'clientError') { log.error('ошибка в панели: ' + m.message); }
       if (m.type === 'open') this.open(m.key);
+      if (m.type === 'agentJobs') this.showAgents();
       if (m.type === 'menu') this.menu(m.key);
       if (m.type === 'groupMenu') this.groupMenu(m.group);
       if (m.type === 'rename') this.rename(m.key);

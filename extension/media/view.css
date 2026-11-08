@@ -103,23 +103,44 @@ button { font: inherit; cursor: pointer; }
 .searchbox input:focus { border-color: rgba(139,124,255,.6); box-shadow: 0 0 0 3px rgba(139,124,255,.15); }
 body.light .searchbox input:focus { border-color: #262626; box-shadow: 0 0 0 3px rgba(255,221,45,.4); }
 body.light .searchbox input { box-shadow: 0 1px 2px rgba(0,0,0,.04); }
-/* Новый чат — две компактные кнопки справа от поиска: «+» и логотип агента */
-.searchbox .nb {
-  flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 2px;
-  height: 31px; padding: 0 8px 0 6px; border-radius: 10px; color: var(--muted);
-  background: linear-gradient(180deg, var(--gl-top), var(--gl-bot)); border: 1px solid var(--gl-edge); box-shadow: inset 0 1px 0 var(--gl-hi);
-  transition: background .15s, border-color .15s, color .15s, transform .1s;
+/* Новый чат — две большие кнопки под поиском, по полширины (0.8.2) */
+.newrow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.nbig {
+  height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; gap: 7px;
+  font-weight: 650; font-size: 13px; color: var(--ink); border: 1px solid var(--gl-edge);
+  transition: background .15s, border-color .15s, transform .1s;
 }
-.searchbox .nb .pl { width: 11px; height: 11px; }
-.searchbox .nb .nbi { display: inline-flex; }
-.searchbox .nb .ag.logo svg { width: 16px; height: 16px; }
-.searchbox .nb:hover { color: var(--ink); transform: translateY(-.5px); }
-.searchbox .nb:active { transform: scale(.96); }
-.searchbox .nb.claude:hover { background: rgba(217,119,87,.18); border-color: rgba(217,119,87,.55); }
-.searchbox .nb.codex:hover { background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.3); }
-body.light .searchbox .nb { background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
-body.light .searchbox .nb.claude:hover { background: rgba(217,119,87,.12); border-color: rgba(217,119,87,.6); }
-body.light .searchbox .nb.codex:hover { background: rgba(0,0,0,.05); border-color: rgba(0,0,0,.25); }
+.nbig .nbi { display: inline-flex; }
+.nbig .ag.logo svg { width: 17px; height: 17px; }
+.nbig .nbp { font-weight: 400; font-size: 17px; opacity: .75; margin-left: -2px; }
+.nbig:active { transform: scale(.97); }
+.nbig.claude { background: linear-gradient(135deg, rgba(217,119,87,.30), rgba(217,119,87,.14)); border-color: rgba(217,119,87,.45); }
+.nbig.claude:hover { background: linear-gradient(135deg, rgba(217,119,87,.45), rgba(217,119,87,.22)); }
+.nbig.codex { background: linear-gradient(135deg, rgba(255,255,255,.12), rgba(255,255,255,.05)); border-color: rgba(255,255,255,.18); }
+.nbig.codex:hover { background: rgba(255,255,255,.16); }
+/* светлая — мягко: белая кнопка с лёгким оттенком агента, без заливки (0.8.3) */
+body.light .nbig { color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+body.light .nbig.claude { background: linear-gradient(135deg, rgba(217,119,87,.13), rgba(217,119,87,.05)), #fff; border-color: rgba(217,119,87,.38); }
+body.light .nbig.claude:hover { background: linear-gradient(135deg, rgba(217,119,87,.22), rgba(217,119,87,.10)), #fff; border-color: rgba(217,119,87,.6); }
+body.light .nbig.codex { background: #fff; border-color: rgba(0,0,0,.12); }
+body.light .nbig.codex:hover { background: rgba(0,0,0,.04); border-color: rgba(0,0,0,.25); }
+.nbig:disabled { opacity: .38; cursor: not-allowed; transform: none; }
+
+/* меню воронки: Claude / Codex и архив */
+.pop {
+  position: absolute; right: 10px; top: 36px; z-index: 10; min-width: 170px; padding: 4px;
+  border-radius: 10px; border: 1px solid var(--gl-edge); background: var(--bg);
+  box-shadow: 0 8px 28px rgba(0,0,0,.45);
+}
+body.light .pop { background: #fff; box-shadow: 0 8px 28px rgba(20,20,30,.14); }
+.pop .mi { display: flex; align-items: center; gap: 7px; width: 100%; padding: 6px 8px; border: 0; border-radius: 7px; background: none; color: var(--ink); text-align: left; font-size: 12.5px; }
+.pop .mi:hover { background: var(--hover); }
+.pop .mi .ck { width: 14px; height: 14px; display: inline-flex; color: var(--a3); }
+body.light .pop .mi .ck { color: #262626; }
+.pop .mi .ck svg, .pop .mi .ai svg { width: 14px; height: 14px; }
+.pop .mi .ai { display: inline-flex; color: var(--muted); }
+.pop .mi b { margin-left: auto; color: var(--muted); font-weight: 600; font-size: 11px; }
+.pop .msep { height: 1px; background: var(--gl-edge); margin: 4px 2px; }
 
 /* счётчик новых — он же фильтр «непрочитанные» */
 button.sum { border: 1px solid transparent; background: transparent; padding: 2px 7px; border-radius: 999px; font: inherit; font-size: 11px; }
@@ -130,7 +151,37 @@ body.light button.sum.on { background: rgba(220,50,50,.08); }
 
 /* фильтры */
 .row { margin-top: 8px; }
-#filters { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+#filters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+/* плитки фильтров — одного размера (0.8.2) */
+.tile {
+  position: relative; height: 46px; padding: 0 2px; border-radius: 9px; border: 1px solid var(--gl-edge);
+  background: linear-gradient(180deg, var(--gl-top), var(--gl-bot)); color: var(--muted);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 0;
+  transition: background .15s, color .15s;
+}
+.tile .ti { display: inline-flex; }
+.tile .ti svg { width: 15px; height: 15px; }
+.tile .bolt { width: 15px; height: 15px; color: var(--warn); }
+.tile .fstar svg { width: 15px; height: 15px; fill: var(--yellow); stroke: var(--yellow); }
+body.light .tile .fstar svg { stroke: #E5A800; }
+.tile.t-waiting .ti { color: var(--a3); }
+body.light .tile.t-waiting .ti { color: #0A84FF; }
+.tile .tl { font-size: 10.5px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile b { position: absolute; top: 3px; right: 5px; font-size: 10px; font-weight: 700; color: var(--ink); }
+.tile.hot b { color: var(--bad); }
+.tile .mode { position: absolute; top: 4px; left: 4px; display: inline-flex; opacity: .8; }
+.tile .mode .vi { width: 10px; height: 10px; }
+.tile:hover { color: var(--ink); background: var(--hover); }
+.tile.on { background: var(--chip-on); color: var(--chip-on-ink); border-color: transparent; }
+.tile.on .ti, .tile.on.t-waiting .ti { color: inherit; }
+body.light .tile.on.hot b { color: #FF8A8E; }
+body.light .tile.on b { color: #fff; }
+/* полоса «открыт архив» под плитками */
+.archbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 9px; border-radius: 9px; background: var(--chip-on); color: var(--chip-on-ink); font-size: 12px; font-weight: 600; }
+.archbar .ai { display: inline-flex; } .archbar .ai svg { width: 14px; height: 14px; }
+.archbar b { font-weight: 700; opacity: .8; }
+.archbar .ib { color: inherit; } .archbar .ib:first-of-type { margin-left: auto; }
+.archbar .ib .vi { width: 12px; height: 12px; }
 .sep { width: 1px; height: 14px; background: var(--gl-edge); margin: 0 3px; }
 .chip {
   display: inline-flex; align-items: center; gap: 4px;
@@ -311,3 +362,21 @@ body.light .cstar.on svg { fill: #FFDD2D; stroke: #E5A800; }
 .cstar.pop svg { animation: starpop .35s ease-out; }
 
 .ib:disabled { opacity: .35; cursor: default; background: transparent; }
+
+/* «агент N» — фоновые задачи сервера; нажать — что делает агент */
+button.agentb { white-space: nowrap; display: flex; align-items: center; gap: 5px; border: 1px solid var(--gl-edge); background: transparent; color: var(--muted); padding: 2px 7px; border-radius: 999px; font: inherit; font-size: 11px; cursor: pointer; }
+button.agentb[hidden] { display: none; }
+button.agentb:hover { background: var(--hover); }
+button.agentb.run { color: #2FBF71; font-weight: 600; border-color: rgba(47,191,113,.45); }
+button.agentb.on { background: var(--hover); border-color: currentColor; }
+button.agentb .pulse { position: relative; width: 6px; height: 6px; border-radius: 50%; background: #2FBF71; animation: blink 1.1s ease-in-out infinite; }
+body.light button.agentb.run { color: #1E8E50; }
+
+/* светлая: выбранная плитка и полоса архива — светлые с жёлтым акцентом, не чёрные (0.8.3) */
+body.light .tile { background: #fff; }
+body.light .tile.on, body.light .archbar { background: rgba(255,221,45,.22); color: var(--ink); border-color: rgba(229,168,0,.55); }
+body.light .archbar { border: 1px solid rgba(229,168,0,.55); }
+body.light .tile.on b { color: var(--ink); }
+body.light .tile.on.hot b { color: var(--bad); }
+body.light .tile.on.t-waiting .ti { color: #0A84FF; }
+body.light .tile.on .bolt { color: #F08300; }

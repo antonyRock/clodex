@@ -24,6 +24,7 @@
     ? `<span class="ag logo ${a}" title="${tip || ''}">${icons[a]}</span>`
     : `<span class="ag ${a}" title="${tip || ''}">${a === 'claude' ? 'C' : 'X'}</span>`;
   let results = null, resultQ = '';
+  let jobs = []; // названия фоновых задач сервера, которые работают сейчас
 
   const $ = (id) => document.getElementById(id);
   const list = $('list'), q = $('q');
@@ -31,14 +32,21 @@
 
   // «Последние» убраны, «Все» называются «Недавние»; «Не прочитано» — по клику на счётчик новых в заголовке
   if (st.filter === 'recent') st.filter = 'all';
-  const FILTERS = [['all', 'Недавние'], ['fav', 'Избранное'], ['active', 'Активные'], ['waiting', 'Жду ответа'], ['archive', 'Архив']];
+  const FILTERS = [['all', 'Недавние'], ['fav', 'Избранное'], ['active', 'Активные'], ['waiting', 'Жду ответа']]; // архив — в меню воронки
+  // Значки плиток: у каждого фильтра свой
+  const TILE_ICON = {
+    all: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 5v3.2l2.2 1.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+    waiting: '<svg viewBox="0 0 16 16"><path d="M2.5 4.2c0-.9.7-1.6 1.6-1.6h7.8c.9 0 1.6.7 1.6 1.6v5.2c0 .9-.7 1.6-1.6 1.6H7l-3 2.4V11c-.8 0-1.5-.7-1.5-1.6z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><circle cx="5.6" cy="6.8" r=".9" fill="currentColor"/><circle cx="8" cy="6.8" r=".9" fill="currentColor"/><circle cx="10.4" cy="6.8" r=".9" fill="currentColor"/></svg>',
+    disk: '<svg viewBox="0 0 16 16"><path d="M2.6 3.4c0-.5.4-.8.8-.8h7.6l2.4 2.4v7.6c0 .4-.3.8-.8.8H3.4c-.4 0-.8-.4-.8-.8z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M5 2.8v2.8h5V2.8M5 13.2V9.4h6v3.8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>',
+    check: '<svg viewBox="0 0 16 16"><path d="M3.5 8.3l3 3 6-6.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  };
   const FILTER_TIP = {
     active: 'Агент работает, ответил, а вы не прочитали, или в чате что-то было за последние 2 часа',
     all: 'Все чаты, свежие сверху', unread: 'Агент ответил, а вы не открывали',
     waiting: 'Последний ответ агента кончается вопросом, а вы после него не писали', archive: 'Чаты, убранные в архив', fav: 'Избранные чаты и группы (звёздочка у чата или у группы). Повторное нажатие — только избранные чаты списком / с группами',
   };
   // Вид каждого фильтра: по группам или списком; повторное нажатие на выбранный фильтр переключает.
-  const GROUPED_DEFAULT = { all: true, fav: true, active: true, recent: false, unread: false, waiting: false, archive: false };
+  const GROUPED_DEFAULT = { all: true, fav: true, active: true, recent: false, unread: false, waiting: false, archive: false, bg: false };
   if (!st.grouped) st.grouped = { ...GROUPED_DEFAULT, recent: !!st.recentGrouped };
   const isGrouped = (f) => (f in st.grouped ? st.grouped[f] : GROUPED_DEFAULT[f]);
   const VIEW_ICON = {
@@ -106,6 +114,14 @@
   const byAgent = (i) => !!st.agents[i.agent];
   const live = () => items.filter((i) => !i.archived && byAgent(i));
 
+  let lastCnt = { archive: 0 };
+  // Меню воронки: чьи чаты показывать и архив
+  function renderMenu() {
+    const row = (k) => `<button class="mi ${st.agents[k] ? 'on' : ''}" data-a="${k}"><span class="ck">${st.agents[k] ? TILE_ICON.check : ''}</span>${badge(k)}<span>${agName(k)}</span></button>`;
+    $('agentsMenu').innerHTML = row('claude') + row('codex') + '<div class="msep"></div>'
+      + `<button class="mi ${st.filter === 'archive' ? 'on' : ''}" data-archmenu="1"><span class="ck">${st.filter === 'archive' ? TILE_ICON.check : ''}</span><span class="ai">${TILE_ICON.disk}</span><span>Архив</span><b>${lastCnt.archive || ''}</b></button>`;
+  }
+  const closeMenu = () => { $('agentsMenu').hidden = true; };
   function renderFilters() {
     const v = live();
     const cnt = {
@@ -115,14 +131,28 @@
       active: v.filter(isActive).length,
       fav: v.filter((i) => favChats[i.key] || favorites[i.group]).length,
     };
+    // Плитки одного размера: значок, подпись, число в углу; у выбранной — значок «группы / список» в другом углу
+    const tileIcon = (k) => k === 'active' ? BOLT : k === 'fav' ? `<span class="fstar">${ICON.star}</span>` : TILE_ICON[k] || '';
     $('filters').innerHTML =
-      FILTERS.map(([k, n]) => `<button class="chip ${k === 'active' ? 'act' : ''} ${st.filter === k ? 'on' : ''} ${(k === 'unread' || k === 'active') && cnt[k] ? 'hot' : ''}" data-f="${k}" title="${(FILTER_TIP[k] || 'Все чаты') + (st.filter === k ? '. Нажмите ещё раз — ' + (isGrouped(k) ? 'списком' : 'по группам') : '')}">${k === 'active' ? BOLT : k === 'fav' ? `<span class="fstar">${ICON.star}</span>` : ''}${n}${st.filter === k ? `<span class="mode" title="Сейчас ${isGrouped(k) ? 'по группам' : 'списком'} — нажмите ещё раз, чтобы ${isGrouped(k) ? 'показать списком' : 'разложить по группам'}">${isGrouped(k) ? VIEW_ICON.groups : VIEW_ICON.list}</span>` : ''}${cnt[k] ? ` <b>${cnt[k]}</b>` : ''}</button>`).join('');
+      FILTERS.map(([k, n]) => `<button class="tile t-${k} ${st.filter === k ? 'on' : ''} ${(k === 'unread' || k === 'active') && cnt[k] ? 'hot' : ''}" data-f="${k}" title="${(FILTER_TIP[k] || 'Все чаты') + (st.filter === k ? '. Нажмите ещё раз — ' + (isGrouped(k) ? 'списком' : 'по группам') : '')}"><span class="ti">${tileIcon(k)}</span><span class="tl">${n}</span>${cnt[k] ? `<b>${cnt[k]}</b>` : ''}${st.filter === k ? `<span class="mode">${isGrouped(k) ? VIEW_ICON.groups : VIEW_ICON.list}</span>` : ''}</button>`).join('')
+      + (st.filter === 'archive' ? `<div class="archbar"><span class="ai">${TILE_ICON.disk}</span>Архив <b>${cnt.archive}</b><button class="ib" data-f="archive" title="${isGrouped('archive') ? 'Показать списком' : 'Разложить по группам'}">${isGrouped('archive') ? VIEW_ICON.groups : VIEW_ICON.list}</button><button class="ib x" data-archclose="1" title="Закрыть архив">✕</button></div>` : '');
+    lastCnt = cnt;
     $('sum').innerHTML = cnt.unread ? `<span class="pulse"></span>${cnt.unread} новых` : 'всё прочитано';
     $('sum').title = st.filter === 'unread' ? 'Показаны непрочитанные — нажмите, чтобы вернуться к «Недавним»' : cnt.unread ? `Непрочитанных чатов: ${cnt.unread} — нажмите, чтобы показать только их` : 'Показать непрочитанные';
     $('sum').className = 'sum' + (cnt.unread ? ' hot' : '') + (st.filter === 'unread' ? ' on' : '');
+    // «Агент N»: сколько фоновых задач сервера работает сейчас (контрольные точки + фоновые чаты в работе)
+    const bgWork = items.filter((i) => i.background && i.status === 'working' && !jobs.some((j) => (i.title || '').startsWith(j)));
+    const nAgent = jobs.length + bgWork.length;
+    const bgDay = items.filter((i) => i.background && Date.now() - i.ts < 24 * 3600e3).length;
+    const ab = $('agentBadge');
+    ab.hidden = !nAgent && !bgDay && st.filter !== 'bg';
+    ab.className = 'agentb' + (nAgent ? ' run' : '') + (st.filter === 'bg' ? ' on' : '');
+    ab.innerHTML = nAgent ? `<span class="pulse"></span>агент ${nAgent}` : 'агент';
+    ab.title = (nAgent ? `На сервере работает фоновых задач: ${nAgent}` + (jobs.length ? ` (${jobs.join(', ')})` : '') : 'Сейчас на сервере ничего не работает') + (bgDay ? `. Фоновых чатов за сутки: ${bgDay}` : '') + '. Нажмите — что делает агент';
     const hidden = !st.agents.claude || !st.agents.codex;
-    $('agentsBtn').classList.toggle('on', hidden);
-    $('agentsBtn').title = hidden ? `Показаны только чаты ${st.agents.claude ? 'Claude' : 'Codex'} — нажмите, чтобы изменить` : 'Чьи чаты показывать: Claude / Codex';
+    $('agentsBtn').classList.toggle('on', hidden || st.filter === 'archive');
+    $('agentsBtn').title = (hidden ? `Показаны только чаты ${st.agents.claude ? 'Claude' : 'Codex'}` : 'Фильтр: Claude / Codex') + (st.filter === 'archive' ? '. Открыт архив' : ', архив');
+    if (!$('agentsMenu').hidden) renderMenu();
   }
 
   // Вес чата: сколько токенов перечитывает каждое новое сообщение. Показываем от 100 тыс.
@@ -199,6 +229,7 @@
     if (st.filter === 'active') v = v.filter((i) => isActive(i) || keep(i));
     if (st.filter === 'waiting') v = v.filter((i) => i.waiting || keep(i));
     if (st.filter === 'recent') v = v.slice(0, 40);
+    if (st.filter === 'bg') v = v.filter((i) => i.background);
     if (!v.length) {
       const msg = { unread: 'Всё прочитано', waiting: 'Никто не ждёт ответа', archive: 'Архив пуст', fav: isGrouped('fav') ? 'Избранного пока нет — наведите на чат или группу и нажмите звёздочку' : 'Избранных чатов нет — наведите на чат и нажмите звёздочку', active: 'Активных нет: никто не работает, не ждёт и не ответил' }[st.filter] || 'Чатов нет';
       list.innerHTML = `<div class="empty">${msg}</div>`;
@@ -237,6 +268,7 @@
 
   // ---------- нажатия ----------
   document.addEventListener('click', (e) => {
+    if (!e.target.closest('#agentsMenu') && !e.target.closest('#agentsBtn')) closeMenu();
     const f = e.target.closest('[data-f]');
     if (f) {
       if (f.dataset.f === st.filter) st.grouped[st.filter] = !isGrouped(st.filter); // повторное нажатие — группы / список
@@ -254,8 +286,11 @@
     if (e.target.closest('#newGroup') || e.target.closest('[data-addgroup]')) { vscode.postMessage({ type: 'newGroup' }); return; }
     if (e.target.closest('#themeBtn')) { vscode.postMessage({ type: 'toggleVsTheme' }); return; }
     if (e.target.closest('#foldAll')) { vscode.postMessage({ type: 'collapseAll', value: !allFolded() }); return; }
+    if (e.target.closest('#agentBadge')) { if (st.filter === 'bg') { st.filter = 'all'; save(); render(); } else vscode.postMessage({ type: 'agentJobs' }); return; }
     if (e.target.closest('#sum')) { st.filter = st.filter === 'unread' ? 'all' : 'unread'; if (results) { q.value = ''; onSearch(); } save(); render(); return; }
-    if (e.target.closest('#agentsBtn')) { vscode.postMessage({ type: 'agentsMenu', agents: st.agents }); return; }
+    if (e.target.closest('#agentsBtn')) { const m = $('agentsMenu'); m.hidden = !m.hidden; if (!m.hidden) renderMenu(); return; }
+    if (e.target.closest('[data-archmenu]')) { st.filter = st.filter === 'archive' ? 'all' : 'archive'; if (results) { q.value = ''; onSearch(); } closeMenu(); save(); render(); return; }
+    if (e.target.closest('[data-archclose]')) { st.filter = 'all'; save(); render(); return; }
     const gp = e.target.closest('[data-gplus]');
     if (gp) { vscode.postMessage({ type: 'new', agent: 'last', group: gp.closest('.gh').dataset.g }); return; }
     const cs = e.target.closest('[data-cstar]');
@@ -409,7 +444,7 @@
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (m.type === 'data') {
-      items = m.items; favorites = m.favorites || {}; favChats = m.favChats || {}; collapsed = m.collapsed || {}; order = m.order || []; icons = m.icons || {}; customGroups = m.customGroups || []; lastAgent = m.lastAgent || 'claude';
+      items = m.items; jobs = m.jobs || []; favorites = m.favorites || {}; favChats = m.favChats || {}; collapsed = m.collapsed || {}; order = m.order || []; icons = m.icons || {}; customGroups = m.customGroups || []; lastAgent = m.lastAgent || 'claude';
       if (m.installed) installed = m.installed;
       // Если в выключенном фильтре остался единственный включённый агент — показать того, что есть.
       if (!installed.claude && !items.some((i) => i.agent === 'claude')) st.agents.codex = true;
@@ -430,6 +465,7 @@
     if (m.type === 'current') { sticky = m.key; if (!dragG) render(); }
     if (m.type === 'theme') applyTheme(!!m.light);
     if (m.type === 'focusSearch') { q.focus(); q.select(); }
+    if (m.type === 'filter') { st.filter = m.filter; if (results) { q.value = ''; onSearch(); } save(); render(); }
   });
 
   setInterval(() => document.querySelectorAll('[data-ts]').forEach((el) => { el.textContent = ago(+el.dataset.ts); }), 30000);

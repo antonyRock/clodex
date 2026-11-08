@@ -120,6 +120,7 @@ function parseCodex(content, file) {
       if (p.parent_thread_id || (p.source && typeof p.source === 'object' && p.source.subagent)) return null; // служебные под-чаты
       chat = newChat('codex', p.id, file);
       chat.cwd = p.cwd || '';
+      if (p.source === 'exec' || p.originator === 'codex_exec') chat.background = true; // `codex exec` без окна (сервер, бот)
       continue;
     }
     if (!chat) continue;
@@ -135,20 +136,52 @@ function parseCodex(content, file) {
       if (p.role === 'user') {
         const text = cleanCodexUser(raw);
         if (!text) continue;
-        if (!chat.firstUser) chat.firstUser = text.slice(0, 200);
+        if (!chat.firstUser) {
+          chat.firstUser = text.slice(0, 200);
+          if (chat.background) chat.bgTitle = codexJobTitle(text);
+        }
         chat.lastUserTs = t; chat.lastTs = Math.max(chat.lastTs, t); chat.lastUserText = text.slice(0, 600);
         addText(chat, 'user', text);
       } else {
-        const text = raw.trim();
+        let text = raw.trim();
         if (!text) continue;
+        if (chat.background) text = codexResultText(text) || text;
         chat.lastAssistantTs = t; chat.lastAssistantText = text.slice(-1200);
         chat.lastTs = Math.max(chat.lastTs, t);
         addText(chat, 'assistant', text);
       }
     }
   }
-  if (chat) chat.title = chat.firstUser.split('\n')[0].slice(0, 80) || 'Без названия';
+  if (chat) chat.title = chat.bgTitle || chat.firstUser.split('\n')[0].slice(0, 80) || 'Без названия';
   return chat;
+}
+
+// «…партию №0012…\n# Полный смысловой разбор ChatGPT — поручение…» → «Полный смысловой разбор ChatGPT — партия 0012»
+function codexJobTitle(text) {
+  const head = text.slice(0, 3000);
+  const h = head.match(/^#\s+(.+?)(?:\s+—\s+.*)?$/m);
+  const n = head.match(/парти[юяи]\s*№\s*(\d+)/i);
+  if (!h && !n) return '';
+  return (h ? h[1].trim() : 'Фоновая задача') + (n ? ' — партия ' + n[1] : '');
+}
+
+// Итог фоновой партии приходит машинным JSON — показываем его по-человечески.
+function codexResultText(text) {
+  if (!text.startsWith('{')) return '';
+  let r;
+  try { r = JSON.parse(text); } catch { return ''; }
+  if (!r || typeof r !== 'object') return '';
+  const out = [];
+  if (r.status) out.push(r.status === 'batch_complete' ? '✅ Партия выполнена' : `Статус: ${r.status}`);
+  if (r.summary) out.push(String(r.summary));
+  const nums = [];
+  if (Array.isArray(r.complete_segment_ids)) nums.push(`фрагментов: ${r.complete_segment_ids.length}`);
+  if (r.facts_added != null) nums.push(`факт-записей: +${r.facts_added}`);
+  if (r.culture_added) nums.push(`культура: +${r.culture_added}`);
+  if (Array.isArray(r.equipment_cards_updated) && r.equipment_cards_updated.length) nums.push(`карточек оборудования: ${r.equipment_cards_updated.length}`);
+  if (nums.length) out.push(nums.join(' · '));
+  if (Array.isArray(r.changed_files) && r.changed_files.length) out.push('Изменены файлы:\n' + r.changed_files.map((f) => `- ${f}`).join('\n'));
+  return out.join('\n\n');
 }
 
 async function readCodexTitles() {
@@ -355,4 +388,71 @@ function claudeTranscript(content, title) {
   return out.join('\n') + '\n';
 }
 
-module.exports = { Scanner, search, isQuestion, loadRegistry, autoGroup, readVsState, HOME, claudeTranscript };
+// Читаемый протокол фонового чата Codex (`codex exec`): задание (сокращённо), что агент писал, какие команды запускал, итог.
+function codexTranscript(content, title) {
+  const out = [`# ${title}`, ''];
+  const cut = (t, n) => (t.length > n ? t.slice(0, n) + ' …' : t);
+  const time = (s) => { const d = new Date(s); return isNaN(d) ? '' : d.toLocaleString('ru-RU'); };
+  const cmdOf = (input) => {
+    const m = String(input || '').match(/cmd"?\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (!m) return String(input || '');
+    try { return JSON.parse('"' + m[1] + '"'); } catch { return m[1]; }
+  };
+  for (const line of content.split('\n')) {
+    if (!line) continue;
+    let d;
+    try { d = JSON.parse(line); } catch { continue; }
+    if (d.type !== 'response_item') continue;
+    const p = d.payload || {};
+    if (p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
+      const raw = (p.content || []).map((b) => b.text || '').join('\n');
+      if (p.role === 'user') {
+        const t = cleanCodexUser(raw);
+        if (!t) continue;
+        const short = t.length > 1500 ? t.slice(0, 1500) + `\n\n*…задание сокращено: всего ${t.length.toLocaleString('ru-RU')} знаков (инструкция и текст фрагментов).*` : t;
+        out.push('', `## 🧑 Задание · ${time(d.timestamp)}`, '', short, '');
+      } else {
+        const t = codexResultText(raw.trim()) || raw.trim();
+        if (t) out.push('', `### 🤖 Агент · ${time(d.timestamp)}`, '', t, '');
+      }
+    } else if (p.type === 'custom_tool_call' || p.type === 'function_call') {
+      let arg = p.type === 'custom_tool_call' ? cmdOf(p.input) : p.arguments;
+      if (p.type === 'function_call') { try { const a = JSON.parse(p.arguments); arg = a.cmd || a.command || p.arguments; } catch {} }
+      if (Array.isArray(arg)) arg = arg.join(' ');
+      const first = String(arg).split('\n').slice(0, 2).join(' ⏎ ');
+      out.push(`- 🔧 \`${cut(first.replace(/\s+/g, ' '), 300).replace(/`/g, "'")}\``);
+    }
+  }
+  return out.join('\n') + '\n';
+}
+
+// Фоновые задачи по контрольным точкам (`*Контрольная точка.json`), которые синхронизируются с сервера.
+// Работает, если статус «running»/«в работе» и файл менялся недавно — так зависшая задача не светится вечно.
+const JOB_FRESH_MS = 20 * 60 * 1000;
+function listJobs(root) {
+  const out = [];
+  const walk = (dir, depth) => {
+    let ents;
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      if (e.name.startsWith('.') || e.name.startsWith('99_') || e.name === '10_Документы' || e.name === 'node_modules') continue;
+      const f = path.join(dir, e.name);
+      if (e.isDirectory()) { if (depth < 4) walk(f, depth + 1); continue; }
+      if (!/Контрольная точка\.json$/.test(e.name)) continue;
+      let d, st;
+      try { st = fs.statSync(f); d = JSON.parse(fs.readFileSync(f, 'utf8')); } catch { continue; }
+      const status = String(d.status || '');
+      const fresh = Date.now() - st.mtimeMs < JOB_FRESH_MS;
+      const running = /^(running|в работе)$/i.test(status) && fresh;
+      const name = path.basename(dir).replace(/^\d+_/, '');
+      const total = d.queue_total || 0, done = d.segments_done || 0;
+      const progress = total && done ? `${done.toLocaleString('ru-RU')} из ${total.toLocaleString('ru-RU')} (${Math.floor(done * 100 / total)}%)` : (d.batches_done ? `партий: ${d.batches_done}` : '');
+      const logs = ['03_Ход разбора.md'].map((n) => path.join(dir, n)).filter((x) => fs.existsSync(x));
+      out.push({ name, dir, file: f, status, running, mtime: st.mtimeMs, progress, batch: d.pending_batch || null, log: logs[0] || f });
+    }
+  };
+  walk(root, 0);
+  return out;
+}
+
+module.exports = { Scanner, search, isQuestion, loadRegistry, autoGroup, readVsState, HOME, claudeTranscript, codexTranscript, listJobs };
