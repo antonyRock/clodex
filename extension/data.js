@@ -41,6 +41,7 @@ function newChat(agent, id, file) {
     title: '', aiTitle: '', customTitle: '', firstUser: '', cwd: '',
     lastTs: 0, lastUserTs: 0, lastAssistantTs: 0, lastAssistantText: '', lastUserText: '',
     finished: true, text: '', msgCount: 0,
+    edits: [], // последние правки файлов агентом: { f, t } — плашка «бот» показывает, что он правит сейчас
     ctx: 0, // размер контекста на последнем шаге агента, токенов (сколько перечитывает каждое новое сообщение)
   };
 }
@@ -51,9 +52,16 @@ function addText(chat, who, t) {
   chat.msgCount++;
 }
 
+function noteEdit(chat, f, t) {
+  chat.edits = (chat.edits || []).filter((e) => e.f !== f);
+  chat.edits.push({ f, t });
+  if (chat.edits.length > 6) chat.edits.shift();
+}
+
 // ---------- Claude ----------
 function parseClaude(content, id, file) {
   const chat = newChat('claude', id, file);
+  let firstRaw = '', lastRaw = '';
   for (const line of content.split('\n')) {
     if (!line) continue;
     // быстрый отсев тяжёлых служебных строк
@@ -64,6 +72,11 @@ function parseClaude(content, id, file) {
     if (type === 'ai-title') { chat.aiTitle = d.aiTitle || chat.aiTitle; continue; }
     if (type === 'custom-title') { chat.customTitle = d.customTitle || d.title || chat.customTitle; continue; }
     if (type === 'summary' && d.summary && !chat.aiTitle) { chat.aiTitle = d.summary; continue; }
+    if (type === 'attachment') { // где запущен агент: linux — сервер (бот, ночные задачи), darwin — Mac
+      const sn = d.attachment && d.attachment.snapshot;
+      if (sn && sn.platform && !chat.platform) chat.platform = sn.platform;
+      continue;
+    }
     if (type !== 'user' && type !== 'assistant') continue;
     if (d.isSidechain || d.isMeta) continue;
     if (!chat.cwd && d.cwd) chat.cwd = d.cwd;
@@ -82,8 +95,8 @@ function parseClaude(content, id, file) {
       text = cleanClaudeUser(text);
       if (!text) continue;
       if (text.startsWith('[Request interrupted')) { chat.finished = true; continue; }
-      if (!chat.firstUser) chat.firstUser = text.slice(0, 200);
-      chat.lastUserTs = t; chat.lastTs = Math.max(chat.lastTs, t); chat.lastUserText = text.slice(0, 600);
+      if (!chat.firstUser) { chat.firstUser = text.slice(0, 200); firstRaw = text.slice(0, 8000); }
+      chat.lastUserTs = t; chat.lastTs = Math.max(chat.lastTs, t); chat.lastUserText = text.slice(0, 600); lastRaw = text.slice(0, 8000);
       chat.finished = false;
       addText(chat, 'user', text);
     } else {
@@ -97,6 +110,10 @@ function parseClaude(content, id, file) {
         chat.lastAssistantTs = t; chat.lastAssistantText = text.slice(-1200);
         addText(chat, 'assistant', text);
       }
+      for (const b of blocks) {
+        const f = b.type === 'tool_use' && /^(Edit|Write|MultiEdit|NotebookEdit)$/.test(b.name) && b.input && (b.input.file_path || b.input.notebook_path);
+        if (f) noteEdit(chat, f, t);
+      }
       chat.finished = stop === 'end_turn' || stop === 'stop_sequence' || (text && !blocks.some((b) => b.type === 'tool_use') && stop !== 'tool_use');
     }
   }
@@ -104,6 +121,12 @@ function parseClaude(content, id, file) {
   if (chat.background) { // «Ты фоновый агент… по заданию `…/Папка/00_Задание.md`» → «Папка — партия»
     const m = chat.firstUser.match(/заданию `([^`]+)\/00_[^`/]*`/);
     if (m && !chat.customTitle) chat.title = m[1].split('/').pop() + ' — партия';
+  }
+  // Telegram-бот: `claude -p` на сервере в корне Claude_AI; ночные задачи начинаются с «Ты фоновый агент»
+  if (chat.background && /Claude_AI\/?$/.test(chat.cwd) && chat.platform !== 'darwin' && !/^Ты фоновый агент/.test(firstRaw)) {
+    chat.bot = true;
+    if (!chat.customTitle && !chat.aiTitle) chat.title = botTitle(firstRaw);
+    chat.lastUserText = botPlain(lastRaw).slice(0, 600);
   }
   return chat;
 }
@@ -131,6 +154,11 @@ function parseCodex(content, file) {
       if (p.type === 'task_complete' || p.type === 'turn_aborted') chat.finished = true;
       continue;
     }
+    if (d.type === 'response_item' && (p.type === 'custom_tool_call' || p.type === 'function_call')) {
+      const a = String(p.input || p.arguments || '');
+      for (const m of a.matchAll(/\*\*\* (?:Update|Add) File: ([^\n"\\]+)/g)) noteEdit(chat, m[1].trim(), t);
+      continue;
+    }
     if (d.type === 'response_item' && p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
       const raw = (p.content || []).map((b) => b.text || '').join('\n');
       if (p.role === 'user') {
@@ -138,9 +166,10 @@ function parseCodex(content, file) {
         if (!text) continue;
         if (!chat.firstUser) {
           chat.firstUser = text.slice(0, 200);
-          if (chat.background) chat.bgTitle = codexJobTitle(text);
+          if (chat.background && text.startsWith(BOT_CODEX)) { chat.bot = true; chat.bgTitle = botTitle(text); }
+          else if (chat.background) chat.bgTitle = codexJobTitle(text);
         }
-        chat.lastUserTs = t; chat.lastTs = Math.max(chat.lastTs, t); chat.lastUserText = text.slice(0, 600);
+        chat.lastUserTs = t; chat.lastTs = Math.max(chat.lastTs, t); chat.lastUserText = (chat.bot ? botPlain(text) : text).slice(0, 600);
         addText(chat, 'user', text);
       } else {
         let text = raw.trim();
@@ -154,6 +183,96 @@ function parseCodex(content, file) {
   }
   if (chat) chat.title = chat.bgTitle || chat.firstUser.split('\n')[0].slice(0, 80) || 'Без названия';
   return chat;
+}
+
+// ---------- Telegram-бот ----------
+// Бот добавляет к сообщению служебные приписки в квадратных скобках — в переписке показываем их короткой пометкой.
+const BOT_CODEX = '[Инструкция бота]';
+const cutTo = (t, n) => (t.length > n ? t.slice(0, n).replace(/\s+\S*$/, '') + '…' : t);
+
+function shortNote(n) {
+  let m = n.match(/^Пользователь отвечает на сообщение: «([\s\S]*)»$/);
+  if (m) return '↩️ Ответ на: «' + cutTo(m[1].replace(/\s+/g, ' ').trim(), 160) + '»';
+  m = n.match(/^Возможно, это ответ на «Вопрос дня»[^«]*«([^»]*)»/);
+  if (m) return '❓ Возможно, ответ на «Вопрос дня»: ' + m[1];
+  m = n.match(/^Возможно, это ответ на утреннюю сводку от (\S+?)\./);
+  if (m) return '☀️ Возможно, ответ на утреннюю сводку ' + m[1];
+  return 'ℹ️ ' + cutTo(n.replace(/\s+/g, ' ').trim(), 160);
+}
+
+// Сообщение пользователя из бота → { text, notes, files }
+function botMessage(t) {
+  t = t || '';
+  if (t.startsWith(BOT_CODEX)) { const k = t.indexOf('[Сообщение пользователя]'); t = k >= 0 ? t.slice(k + 24).replace(/^\n/, '') : ''; }
+  t = t.replace(/^\[Сейчас по Москве:[^\]\n]*\]\n+/, ''); // бот ставит время перед сообщением (с 2026-11-08)
+  const notes = [];
+  let files = [];
+  for (let i = 0; i < 4 && t.startsWith('['); i++) {
+    if (t.startsWith('[служебное]')) { notes.push('⚙️ ' + cutTo(t.slice(11).replace(/\s+/g, ' ').trim(), 200)); t = ''; break; }
+    const e = t.indexOf(']\n\n');
+    if (e < 0) break;
+    notes.push(shortNote(t.slice(1, e))); t = t.slice(e + 3);
+  }
+  const m = t.match(/^Я прислал в Telegram файлы, они сохранены:\n([\s\S]*?)\n(?=Моё сообщение к ним: |Разбери их по правилам)/);
+  if (m) {
+    files = m[1].split('\n').filter((l) => l.startsWith('- ')).map((l) => l.slice(2).split('/').pop());
+    const rest = t.slice(m[0].length + 1);
+    t = rest.startsWith('Моё сообщение к ним: ') ? rest.slice(21) : '';
+  }
+  return { text: t.trim(), notes, files };
+}
+
+function botPlain(t) {
+  const b = botMessage(t);
+  return b.text || (b.files.length ? '📎 ' + b.files.join(', ') : '') || b.notes.join(' ');
+}
+
+function botTitle(t) {
+  return cutTo(botPlain(t).split('\n')[0].trim(), 80) || 'Чат с ботом';
+}
+
+// Переписка с ботом для вкладки Clodex: сообщения пользователя, ответы агента, между ними — шаги агента (свёрнуто).
+function botConversation(content, agent) {
+  const out = [];
+  let steps = null;
+  const step = (s) => { if (!steps) { steps = { who: 'steps', list: [] }; out.push(steps); } steps.list.push(s.replace(/\s+/g, ' ').slice(0, 240)); };
+  const say = (who, ts, extra) => { steps = null; out.push({ who, ts, ...extra }); };
+  for (const line of content.split('\n')) {
+    if (!line || line.startsWith('{"type":"api-request')) continue;
+    let d;
+    try { d = JSON.parse(line); } catch { continue; }
+    if (agent === 'claude') {
+      if ((d.type !== 'user' && d.type !== 'assistant') || d.isSidechain || d.isMeta) continue;
+      const c = d.message && d.message.content;
+      const blocks = typeof c === 'string' ? [{ type: 'text', text: c }] : Array.isArray(c) ? c : [];
+      for (const b of blocks) {
+        if (b.type === 'text' && b.text && b.text.trim()) {
+          if (d.type === 'user') {
+            const t = cleanClaudeUser(b.text);
+            if (!t || t.startsWith('[Request interrupted')) continue;
+            say('me', d.timestamp, botMessage(t));
+          } else say('agent', d.timestamp, { text: b.text.trim() });
+        } else if (b.type === 'tool_use') {
+          const i = b.input || {};
+          step(`${b.name}: ${i.description || i.command || i.file_path || i.pattern || i.path || i.url || i.query || ''}`);
+        }
+      }
+    } else {
+      if (d.type !== 'response_item') continue;
+      const p = d.payload || {};
+      if (p.type === 'message' && (p.role === 'user' || p.role === 'assistant')) {
+        const raw = (p.content || []).map((b) => b.text || '').join('\n');
+        if (p.role === 'user') { const t = cleanCodexUser(raw); if (t) say('me', d.timestamp, botMessage(t)); }
+        else if (raw.trim()) say('agent', d.timestamp, { text: raw.trim() });
+      } else if (p.type === 'function_call' || p.type === 'custom_tool_call') {
+        let a = p.arguments || p.input || '';
+        try { const j = JSON.parse(a); a = j.cmd || j.command || a; } catch {}
+        if (Array.isArray(a)) a = a.join(' ');
+        step(String(a).split('\n')[0]);
+      }
+    }
+  }
+  return out.filter((m) => m.who !== 'me' || m.text || m.files.length || m.notes.length);
 }
 
 // «…партию №0012…\n# Полный смысловой разбор ChatGPT — поручение…» → «Полный смысловой разбор ChatGPT — партия 0012»
@@ -455,4 +574,4 @@ function listJobs(root) {
   return out;
 }
 
-module.exports = { Scanner, search, isQuestion, loadRegistry, autoGroup, readVsState, HOME, claudeTranscript, codexTranscript, listJobs };
+module.exports = { botConversation, Scanner, search, isQuestion, loadRegistry, autoGroup, readVsState, HOME, claudeTranscript, codexTranscript, listJobs };

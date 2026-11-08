@@ -2,10 +2,11 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
-const { Scanner, search, isQuestion, loadRegistry, autoGroup, readVsState, HOME, claudeTranscript, codexTranscript, listJobs } = require('./data.js');
+const { Scanner, search, isQuestion, loadRegistry, autoGroup, readVsState, HOME, claudeTranscript, codexTranscript, listJobs, botConversation } = require('./data.js');
 
 const NO_GROUP = 'Без группы';
-const BG_GROUP = 'Фоновые'; // сессии `claude -p` и `codex exec` (ночные задачи сервера, бот)
+const BG_GROUP = 'Фоновые'; // сессии `claude -p` и `codex exec` (ночные задачи сервера, проверки)
+const BOT_GROUP = 'Telegram-бот'; // разговоры с ботом (0.9.0): своя группа, открываются вкладкой-перепиской
 const JOBS_ROOT = path.join(HOME, 'Claude_AI');
 const JOBS_TTL = 30 * 1000; // контрольные точки задач перечитываем не чаще раза в 30 с
 // Реестр проектов рабочей папки агента: ярлык ~/Claude_AI ставит комплект установки.
@@ -15,6 +16,10 @@ const STATE_KEYS = ['initialized', 'seen', 'groupOverride', 'groupAlias', 'disso
 
 const WORKING_MS = 3 * 60 * 1000;  // файл менялся недавно и ответа нет — агент работает
 const POLL_VISIBLE = 4000;
+// Размеры (0.8.6): масштаб самого Clodex и шрифт чатов агентов. Шрифт чатов — настройка VS Code chat.fontSize,
+// её читают и Claude Code, и Codex и применяют сразу.
+const ZOOM_MIN = 0.7, ZOOM_MAX = 1.3;
+const CHAT_FONT_MIN = 10, CHAT_FONT_MAX = 24, CHAT_FONT_DEFAULT = 13;
 const POLL_HIDDEN = 20000;
 
 async function migrate(context) {
@@ -23,6 +28,14 @@ async function migrate(context) {
   const old = await readVsState(`key like '%.clodex' and lower(key) != '${self}'`);
   if (!old || !old.initialized) return;
   for (const k of STATE_KEYS) if (k in old) await context.globalState.update(k, old[k]);
+}
+
+// Имя папки чатов Claude Code в ~/.claude/projects: все символы, кроме латиницы и цифр, — «-».
+// Длинные имена Claude Code обрезает и добавляет хвост, поэтому их сравниваем по началу.
+function projectDirName(p) { return p.replace(/[^a-zA-Z0-9]/g, '-'); }
+function sameProject(a, b) {
+  if (a === b) return true;
+  return a.length > 200 && b.length > 200 && a.slice(0, 200) === b.slice(0, 200);
 }
 
 let log = { info() {}, error() {} };
@@ -34,6 +47,7 @@ async function activate(context) {
   log.info('Clodex ' + (context.extension && context.extension.packageJSON.version) + ' запускается');
   try { await migrate(context); } catch (e) { console.error('Clodex: migrate', e); }
   const provider = new ClodexView(context);
+  try { require('./screens').registerScreens(context, log); } catch (e) { log.error('скриншоты: ' + (e && e.stack || e)); }
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('clodex.chats', provider, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.commands.registerCommand('clodex.refresh', () => provider.refresh(true)),
@@ -51,6 +65,8 @@ async function activate(context) {
   // Агента установили или удалили — обновить кнопки панели без перезапуска.
   context.subscriptions.push(vscode.extensions.onDidChange(() => { provider._icons = null; provider.push(); }));
   provider.start();
+  setTimeout(() => provider.openPending(), 1500); // дать Claude Code запуститься
+  provider.checkFolder();
   log.info('Clodex запущен');
 }
 
@@ -60,7 +76,7 @@ class ClodexView {
     this.view = null;
     this.chats = [];
     this.byKey = new Map();
-    this.cacheFile = path.join(context.globalStorageUri.fsPath, 'cache-v5.json');
+    this.cacheFile = path.join(context.globalStorageUri.fsPath, 'cache-v8.json');
     this.scanner = new Scanner(this.loadCache());
     this.scanning = false;
     this.lastQuery = '';
@@ -105,7 +121,8 @@ class ClodexView {
     this.refresh(true);
     const tick = () => {
       const visible = this.view && this.view.visible;
-      this.timer = setTimeout(async () => { await this.refresh(false); tick(); }, visible ? POLL_VISIBLE : POLL_HIDDEN);
+      const botOpen = [...this.botPanels.values()].some((b) => b.panel.visible); // открыта переписка с ботом — опрашиваем чаще
+      this.timer = setTimeout(async () => { await this.refresh(false); tick(); }, visible || botOpen ? POLL_VISIBLE : POLL_HIDDEN);
     };
     tick();
     this.ctx.subscriptions.push({ dispose: () => clearTimeout(this.timer) });
@@ -113,6 +130,7 @@ class ClodexView {
     this.ctx.subscriptions.push(vscode.window.tabGroups.onDidChangeTabGroups(() => this.postCurrent()));
     this.ctx.subscriptions.push(vscode.window.onDidChangeWindowState(() => this.markActiveTabs()));
     this.ctx.subscriptions.push(vscode.window.onDidChangeActiveColorTheme(() => this.postTheme()));
+    this.ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => { if (e.affectsConfiguration('chat.fontSize')) this.postSizes(); }));
     this.cacheTimer = setInterval(() => this.saveCache(), 30000);
     this.ctx.subscriptions.push({ dispose: () => { clearInterval(this.cacheTimer); this.saveCache(); } });
   }
@@ -133,7 +151,8 @@ class ClodexView {
       this.markActiveTabs(true);
       if (changed && this._currentSent) this.postCurrent(); // новый чат получил название — подсветить его
       if (changed || force) this.push();
-      else this.updateBadge(); // время «N мин» обновляет сама страница
+      else this.updateBadge();
+      this.updateBotPanels(); // время «N мин» обновляет сама страница
     } catch (e) {
       console.error('Clodex: scan', e);
     } finally { this.scanning = false; }
@@ -223,6 +242,7 @@ class ClodexView {
   }
 
   baseGroup(c) {
+    if (c.bot) return BOT_GROUP;
     if (c.background) return BG_GROUP;
     if (c.claudeGroup) return c.claudeGroup;
     const reg = this.registry();
@@ -262,7 +282,9 @@ class ClodexView {
       key: c.key, agent: c.agent, title: this.titleOf(c), group: this.groupOf(c),
       ts: c.lastTs, status: this.status_(c, seen),
       waiting: c.finished && c.lastAssistantTs >= c.lastUserTs && isQuestion(c.lastAssistantText),
-      archived: this.isArchived(c), background: !!c.background, ctx: c.ctx || 0,
+      archived: this.isArchived(c), background: !!c.background, bot: !!c.bot, ctx: c.ctx || 0,
+      // бот: файлы, которые он правил за последние 15 минут (путь от Claude_AI) — подсказка плашки «бот»
+      editing: c.bot ? (c.edits || []).filter((e) => Date.now() - e.t < 15 * 60e3).map((e) => e.f.replace(/^.*\/memory\//, 'память агента: ').replace(/^.*?Claude_AI\//, '')) : undefined,
     }));
   }
 
@@ -322,8 +344,8 @@ class ClodexView {
     this._jobsAt = 0;
     const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'только что' : m < 60 ? `${m} мин назад` : `${Math.round(m / 60)} ч назад`; };
     const jobs = this.jobs().filter((j) => j.running);
-    const bg = this.chats.filter((c) => c.background && this.status_(c) === 'working' && !jobs.some((j) => this.titleOf(c).startsWith(j.name)));
-    const recent = this.chats.filter((c) => c.background && this.status_(c) !== 'working' && Date.now() - (c.mtime || 0) < 24 * 3600e3)
+    const bg = this.chats.filter((c) => c.background && !c.bot && this.status_(c) === 'working' && !jobs.some((j) => this.titleOf(c).startsWith(j.name)));
+    const recent = this.chats.filter((c) => c.background && !c.bot && this.status_(c) !== 'working' && Date.now() - (c.mtime || 0) < 24 * 3600e3)
       .sort((a, b) => (b.mtime || 0) - (a.mtime || 0)).slice(0, 8);
     const items = [];
     if (jobs.length || bg.length) items.push({ label: 'Работает сейчас', kind: vscode.QuickPickItemKind.Separator });
@@ -392,16 +414,88 @@ class ClodexView {
     if (!c) return;
     await this.setRead(key, true);
     this.push();
+    if (c.bot) return this.openBot(c);
     if (c.background) return this.openTranscript(c);
     if (!this.installed()[c.agent]) return this.notInstalled(c.agent);
     try {
       if (c.agent === 'claude') {
+        if (!this.inThisWorkspace(c)) return this.openElsewhere(c);
         await vscode.commands.executeCommand('claude-vscode.editor.open', c.id);
       } else {
         await vscode.env.openExternal(vscode.Uri.parse(`${vscode.env.uriScheme}://openai.chatgpt/local/${c.id}`));
       }
     } catch (e) {
       vscode.window.showErrorMessage(`Clodex: не удалось открыть чат «${c.title}»: ${e.message || e}`);
+    }
+  }
+
+  // Claude Code открывает старый чат, только если он создан в папке, открытой в этом окне.
+  // Иначе молча открывает новый пустой чат. Сверяем папку чата в ~/.claude/projects с папками окна.
+  inThisWorkspace(c) {
+    if (!c.file) return true;
+    const dir = path.basename(path.dirname(c.file));
+    const folders = (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath);
+    if (!folders.length) folders.push(HOME); // пустое окно — Claude Code работает в домашней папке
+    return folders.some((f) => sameProject(projectDirName(f), dir));
+  }
+
+  async openElsewhere(c) {
+    const cwd = c.cwd;
+    if (!cwd || !fs.existsSync(cwd)) {
+      vscode.window.showWarningMessage(`Clodex: чат «${this.titleOf(c)}» создан в папке, которой больше нет${cwd ? ` (${cwd})` : ''}. Открыть его в Claude Code нельзя.`);
+      return;
+    }
+    const WIN = 'Открыть папку чата в новом окне';
+    const TERM = 'Продолжить в терминале';
+    const pick = await vscode.window.showInformationMessage(
+      `Чат «${this.titleOf(c)}» создан в другой папке: ${cwd.replace(HOME, '~')}. Claude Code открывает чат только в окне с этой папкой.`,
+      WIN, TERM);
+    if (pick === WIN) {
+      // Новое окно само откроет чат при запуске (см. openPending).
+      await this.gs.update('pendingOpen', { id: c.id, dir: path.basename(path.dirname(c.file)), at: Date.now() });
+      await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(cwd), { forceNewWindow: true });
+    } else if (pick === TERM) {
+      const t = vscode.window.createTerminal({ name: `Claude: ${this.titleOf(c)}`.slice(0, 60), cwd });
+      t.show();
+      // Команды claude может не быть в PATH — берём программу из расширения Claude Code.
+      const ext = vscode.extensions.getExtension(AGENT_EXT.claude);
+      const bin = ext && path.join(ext.extensionPath, 'resources', 'native-binary', 'claude');
+      const cmd = bin && fs.existsSync(bin) ? `'${bin.replace(/'/g, `'\\''`)}'` : 'claude';
+      t.sendText(`${cmd} --resume ${c.id}`);
+    }
+  }
+
+  // Чаты Claude Code сохраняются в папку окна. Окно без папки, с другой папкой или с Claude_AI,
+  // открытой через ярлык ~/Claude_AI, складывает чаты отдельно — предупреждаем и предлагаем открыть Claude_AI.
+  async checkFolder() {
+    let main;
+    try { main = fs.realpathSync(path.join(HOME, 'Claude_AI')); } catch { return; } // нет рабочей папки — молчим
+    const folders = (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath);
+    if (folders.includes(main)) return;
+    let why = 'Это окно открыто без папки';
+    if (folders.length) {
+      let real = folders[0];
+      try { real = fs.realpathSync(real); } catch {}
+      why = real === main ? 'Claude_AI открыта через ярлык' : `В этом окне открыта папка ${folders[0].replace(HOME, '~')}`;
+    }
+    const OPEN = 'Открыть Claude_AI';
+    const pick = await vscode.window.showWarningMessage(
+      `Clodex: ${why} — новые чаты Claude Code сохранятся отдельно от остальных и потом не откроются из Claude_AI.`,
+      OPEN, 'Не сейчас');
+    if (pick === OPEN) await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(main), { forceNewWindow: false });
+  }
+
+  // Окно открыто кнопкой «Открыть папку чата в новом окне» — открываем этот чат.
+  async openPending() {
+    const p = this.gs.get('pendingOpen');
+    if (!p) return;
+    if (Date.now() - p.at > 2 * 60 * 1000) { await this.gs.update('pendingOpen', undefined); return; }
+    if (!this.inThisWorkspace({ file: path.join('x', p.dir, 'x.jsonl') })) return; // это другое окно — ждём своё
+    await this.gs.update('pendingOpen', undefined);
+    try {
+      await vscode.commands.executeCommand('claude-vscode.editor.open', p.id);
+    } catch (e) {
+      log.error('openPending: ' + (e.message || e));
     }
   }
 
@@ -418,6 +512,54 @@ class ClodexView {
       vscode.window.showErrorMessage(`Clodex: не удалось открыть протокол «${c.title}»: ${e.message || e}`);
     }
   }
+
+  // ---------- Чат с ботом: вкладка-переписка, обновляется сама ----------
+  get botPanels() { if (!this._botPanels) this._botPanels = new Map(); return this._botPanels; }
+
+  openBot(c) {
+    const have = this.botPanels.get(c.key);
+    if (have) { have.panel.reveal(); have.sent = ''; this.sendBot(c.key); return; }
+    const media = vscode.Uri.joinPath(this.ctx.extensionUri, 'media');
+    const panel = vscode.window.createWebviewPanel('clodex.bot', '📱 ' + this.titleOf(c), vscode.ViewColumn.Active,
+      { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [media] });
+    const w = panel.webview;
+    const nonce = Math.random().toString(36).slice(2);
+    w.html = `<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${w.cspSource}; script-src 'nonce-${nonce}';">
+<link rel="stylesheet" href="${w.asWebviewUri(vscode.Uri.joinPath(media, 'bot.css'))}"></head><body>
+<header><div class="tt"><h1 id="title"></h1><div class="sub" id="sub"></div></div>
+<div class="btns"><button class="main" id="cont" title="Новый чат Claude на Mac со ссылкой на этот разговор. Разговор бота не меняется — история не раздвоится">Продолжить на Mac</button>
+<button class="sec" id="proto" title="Все шаги агента и ошибки — в Markdown">Подробный протокол</button></div></header>
+<main id="conv"></main>
+<script nonce="${nonce}" src="${w.asWebviewUri(vscode.Uri.joinPath(media, 'bot.js'))}"></script></body></html>`;
+    const entry = { panel, sent: '' };
+    this.botPanels.set(c.key, entry);
+    panel.onDidDispose(() => this.botPanels.delete(c.key));
+    w.onDidReceiveMessage((m) => {
+      const cur = this.byKey.get(c.key);
+      if (m.type === 'ready') { entry.sent = ''; this.sendBot(c.key); }
+      if (m.type === 'continue') this.continueChat(c.key);
+      if (m.type === 'protocol' && cur) this.openTranscript(cur);
+    });
+  }
+
+  // Шлём переписку, только если чат изменился (размер файла, статус, название) — иначе вкладка не мигает.
+  sendBot(key) {
+    const e = this.botPanels.get(key), c = this.byKey.get(key);
+    if (!e || !c) return;
+    const working = this.status_(c) === 'working';
+    const title = this.titleOf(c);
+    const sig = [c.mtime, working, title].join('|');
+    if (e.sent === sig) return;
+    let items = [];
+    try { items = botConversation(fs.readFileSync(c.file, 'utf8'), c.agent); }
+    catch (err) { log.error('переписка бота: ' + (err.message || err)); }
+    e.sent = sig;
+    e.panel.title = '📱 ' + title;
+    e.panel.webview.postMessage({ type: 'conv', title, agent: c.agent === 'codex' ? 'Codex' : 'Claude', working, items });
+  }
+
+  updateBotPanels() { for (const k of this.botPanels.keys()) this.sendBot(k); }
 
   // group — создать чат сразу в группе: первый новый чат этого агента за 3 минуты попадёт туда
   async newChat(agent, group) {
@@ -469,6 +611,10 @@ class ClodexView {
     const q = head(c.lastUserText, 300);
     const a = tailOf(c.lastAssistantText, 300);
     // Коротко: CLAUDE.md подгружается сам, вес чата агенту не нужен
+    if (c.bot) return `Продолжение разговора с Telegram-ботом «${this.titleOf(c)}» — теперь на Mac. Разговор бота не продолжай и не меняй, работаем здесь.` +
+      (q ? `\nМоё последнее сообщение боту: «${q}»` : '') +
+      (a ? `\nКонец ответа: «${a}»` : '') +
+      `\nПолная переписка с ботом (читать с конца): ${c.file}`;
     return `Продолжение чата «${this.titleOf(c)}» (название может быть неточным).` +
       (q ? `\nПоследний вопрос: «${q}»` : '') +
       (a ? `\nКонец ответа: «${a}»` : '') +
@@ -478,14 +624,15 @@ class ClodexView {
   async continueChat(key) {
     const c = this.byKey.get(key);
     if (!c) return;
-    if (c.agent !== 'claude') {
+    if (c.agent !== 'claude' && !c.bot) {
       vscode.window.showInformationMessage('Clodex: продолжить в новом чате пока можно только для Claude — для Codex способ передать стартовый текст не найден.');
       return;
     }
     if (!this.installed().claude) return this.notInstalled('claude');
     const prompt = this.continuePrompt(c);
     await this.gs.update('lastAgent', 'claude');
-    this.pending = { group: this.groupOf(c), agent: 'claude', t: Date.now(), known: new Set(this.chats.map((x) => x.key)) };
+    // Продолжение разговора бота — обычный чат Mac: группу выберут автогруппы, в «Telegram-бот» не кладём
+    this.pending = c.bot ? null : { group: this.groupOf(c), agent: 'claude', t: Date.now(), known: new Set(this.chats.map((x) => x.key)) };
     this.push();
     try {
       // claude-vscode.editor.open(sessionId, initialPrompt): без sessionId — новый чат, текст встаёт в поле ввода
@@ -505,6 +652,8 @@ class ClodexView {
     const unread = this.isUnread(c);
     const pick = await vscode.window.showQuickPick([
       { label: unread ? '$(check) Отметить прочитанным' : '$(circle-filled) Отметить непрочитанным', id: 'read' },
+      ...(c.bot ? [{ label: '$(device-desktop) Продолжить на Mac', description: 'новый чат Claude со ссылкой на разговор бота', id: 'continue' }] : []),
+      ...(c.bot ? [{ label: '$(output) Подробный протокол', description: 'все шаги агента и ошибки', id: 'protocol' }] : []),
       ...(c.agent === 'claude' && !c.background ? [{ label: '$(arrow-right) Продолжить в новом чате', description: c.ctx ? `сейчас ~${Math.round(c.ctx / 1000)} тыс. токенов` : '', id: 'continue' }] : []),
       { label: '$(edit) Переименовать…', id: 'rename' },
       { label: '$(folder) Перенести в группу…', id: 'group' },
@@ -518,6 +667,7 @@ class ClodexView {
     if (pick.id === 'archive') return this.setArchived(key, !this.isArchived(c));
     if (pick.id === 'rename') return this.rename(key);
     if (pick.id === 'continue') return this.continueChat(key);
+    if (pick.id === 'protocol') return this.openTranscript(c);
     if (pick.id === 'ungroup') {
       const o = { ...this.groupOverride }; delete o[key];
       await this.ctx.globalState.update('groupOverride', o);
@@ -541,6 +691,23 @@ class ClodexView {
     return k === vscode.ColorThemeKind.Light || k === vscode.ColorThemeKind.HighContrastLight;
   }
   postTheme() { this.post({ type: 'theme', light: this.isLightTheme() }); }
+
+  // ---------- размеры ----------
+  getZoom() { const z = Number(this.gs.get('zoom', 1)); return z >= ZOOM_MIN && z <= ZOOM_MAX ? z : 1; }
+  getChatFont() { const v = vscode.workspace.getConfiguration('chat').get('fontSize'); return typeof v === 'number' ? v : CHAT_FONT_DEFAULT; }
+  postSizes() { this.post({ type: 'sizes', zoom: this.getZoom(), chatFont: this.getChatFont(), chatDefault: CHAT_FONT_DEFAULT }); }
+  async setZoom(z) {
+    z = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number(z) || 1)) * 10) / 10;
+    await this.gs.update('zoom', z === 1 ? undefined : z);
+    this.postSizes();
+  }
+  async setChatFont(v) {
+    const cfg = vscode.workspace.getConfiguration('chat');
+    const val = v == null ? undefined : Math.min(CHAT_FONT_MAX, Math.max(CHAT_FONT_MIN, Math.round(v)));
+    try { await cfg.update('fontSize', val === CHAT_FONT_DEFAULT ? undefined : val, vscode.ConfigurationTarget.Global); }
+    catch (e) { log.error('chat.fontSize: ' + e.message); vscode.window.showWarningMessage('Clodex: не удалось изменить размер шрифта чатов — ' + e.message); }
+    this.postSizes();
+  }
 
   // Переключает тему всего VS Code (то же, что Cmd+K Cmd+T): светлая ↔ тёмная из настроек Clodex.
   async toggleVsTheme() {
@@ -670,22 +837,25 @@ class ClodexView {
     const css = view.webview.asWebviewUri(vscode.Uri.joinPath(media, 'view.css'));
     const js = view.webview.asWebviewUri(vscode.Uri.joinPath(media, 'view.js'));
     const nonce = Math.random().toString(36).slice(2);
-    view.webview.html = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
+    view.webview.html = `<!doctype html><html lang="ru" data-zoom="${this.getZoom()}"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';">
 <link rel="stylesheet" href="${css}"></head><body>
 <div id="grid"></div>
 <div id="top">
-  <div class="brand"><span class="word">Clodex</span><span class="sq"></span><button id="sum" class="sum"></button><button id="agentBadge" class="agentb" hidden></button>
-    <span class="tools"><button id="newGroup" class="ib" title="Создать новую группу"><svg viewBox="0 0 16 16"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.5h5.6c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7v4M6 9h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button><button id="themeBtn" class="ib" title="Светлая / тёмная тема VS Code"></button><button id="foldAll" class="ib"></button><button id="agentsBtn" class="ib" title="Фильтр: Claude / Codex, архив"><svg viewBox="0 0 16 16"><path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.2V8.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button></span></div>
+  <div class="brand"><span class="word">Clodex</span><span class="sq"></span><button id="sum" class="sum"></button><button id="agentBadge" class="agentb" hidden></button><button id="botBadge" class="agentb" hidden></button>
+    <span class="tools"><button id="newGroup" class="ib" title="Создать новую группу"><svg viewBox="0 0 16 16"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.5h5.6c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7v4M6 9h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button><button id="themeBtn" class="ib" title="Светлая / тёмная тема VS Code"></button><button id="foldAll" class="ib"></button><button id="sizeBtn" class="ib" title="Размер: список Clodex и текст чатов"><svg viewBox="0 0 16 16"><path d="M1.5 12.5 4.6 4h.8l3.1 8.5M2.6 9.6h4.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.6 12.5l2.1-5.6h.6l2.1 5.6M10.3 10.8h3.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button id="agentsBtn" class="ib" title="Фильтр: Claude / Codex, архив"><svg viewBox="0 0 16 16"><path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.2V8.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button></span></div>
   <div class="searchbox"><input id="q" type="search" placeholder="Поиск по тексту чатов…" spellcheck="false"></div>
   <div class="newrow"><button class="nbig claude" data-new="claude" title="Новый чат с Claude"><span class="nbi"><span class="ag claude">C</span></span><span class="nbt">Claude</span><span class="nbp">+</span></button><button class="nbig codex" data-new="codex" title="Новый чат с Codex"><span class="nbi"><span class="ag codex">X</span></span><span class="nbt">Codex</span><span class="nbp">+</span></button></div>
   <div class="row"><div id="filters"></div></div>
   <div id="agentsMenu" class="pop" hidden></div>
+  <div id="sizeMenu" class="pop size" hidden></div>
 </div>
 <div id="list"></div>
 <script nonce="${nonce}" src="${js}"></script></body></html>`;
     view.webview.onDidReceiveMessage(async (m) => {
-      if (m.type === 'ready') { log.info('панель открыта'); this.postTheme(); this.push(); }
+      if (m.type === 'ready') { log.info('панель открыта'); this.postTheme(); this.postSizes(); this.push(); }
+      if (m.type === 'zoom') this.setZoom(m.value);
+      if (m.type === 'chatFont') this.setChatFont(m.value);
       if (m.type === 'toggleVsTheme') this.toggleVsTheme();
       if (m.type === 'clientError') { log.error('ошибка в панели: ' + m.message); }
       if (m.type === 'open') this.open(m.key);

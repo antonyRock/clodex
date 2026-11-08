@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Собирает расширение Clodex в .vsix и (с флагом --install) ставит в VS Code.
 
-python3 build.py            — только сборка в ./dist/
+python3 build.py            — только сборка в ~/Claude_кэш/clodex-chats/
 python3 build.py --install  — сборка и установка
 """
 import json, os, subprocess, sys, zipfile
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parent / "extension"
-OUT = Path(__file__).resolve().parent / "dist"
+OUT = Path.home() / "Claude_кэш" / "clodex-chats"
 CODE = "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
 
 pkg = json.loads((SRC / "package.json").read_text())
@@ -51,4 +51,4 @@ print("собрано:", vsix)
 
 if "--install" in sys.argv:
     subprocess.run([CODE, "--install-extension", str(vsix), "--force"], check=True)
-    print("installed; reload the VS Code window (Developer: Reload Window)")
+    print("установлено; перезагрузите окно VS Code (Developer: Reload Window)")

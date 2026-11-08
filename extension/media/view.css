@@ -61,7 +61,7 @@ body.light #grid { background:
 }
 
 /* бренд */
-.brand { display: flex; align-items: center; gap: 6px; margin: 0 2px 8px; }
+.brand { display: flex; align-items: center; gap: 6px; margin: 0 2px 8px; flex-wrap: wrap; row-gap: 4px; } /* узкая панель: значки уходят на вторую строку */
 .word {
   font-size: 17px; font-weight: 800; letter-spacing: -.02em;
   background: linear-gradient(90deg, #fff 0%, var(--a1) 55%, var(--a3) 100%);
@@ -141,6 +141,17 @@ body.light .pop .mi .ck { color: #262626; }
 .pop .mi .ai { display: inline-flex; color: var(--muted); }
 .pop .mi b { margin-left: auto; color: var(--muted); font-weight: 600; font-size: 11px; }
 .pop .msep { height: 1px; background: var(--gl-edge); margin: 4px 2px; }
+/* меню «Размер» (0.8.6) */
+.pop.size { min-width: 220px; padding: 6px; }
+.srow { display: flex; align-items: center; gap: 6px; padding: 5px 4px; }
+.srow .sl { flex: 1; display: flex; flex-direction: column; line-height: 1.25; color: var(--ink); font-size: 12.5px; }
+.srow .sl small { color: var(--muted); font-size: 10.5px; }
+.srow .sb { width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--gl-edge); background: var(--hover); color: var(--ink); font-size: 15px; line-height: 1; padding: 0; }
+.srow .sb:hover { border-color: var(--a3); }
+body.light .srow .sb:hover { border-color: #262626; }
+.srow .sb:disabled, .pop .mi:disabled { opacity: .35; cursor: default; }
+.srow .sv { min-width: 38px; text-align: center; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+#sizeBtn.on { color: var(--a3); background: var(--hover); }
 
 /* счётчик новых — он же фильтр «непрочитанные» */
 button.sum { border: 1px solid transparent; background: transparent; padding: 2px 7px; border-radius: 999px; font: inherit; font-size: 11px; }
@@ -371,6 +382,8 @@ button.agentb.run { color: #2FBF71; font-weight: 600; border-color: rgba(47,191,
 button.agentb.on { background: var(--hover); border-color: currentColor; }
 button.agentb .pulse { position: relative; width: 6px; height: 6px; border-radius: 50%; background: #2FBF71; animation: blink 1.1s ease-in-out infinite; }
 body.light button.agentb.run { color: #1E8E50; }
+button.agentb.cool { color: #E0A800; font-weight: 600; border-color: rgba(224,168,0,.5); }
+body.light button.agentb.cool { color: #9A7400; border-color: rgba(154,116,0,.45); }
 
 /* светлая: выбранная плитка и полоса архива — светлые с жёлтым акцентом, не чёрные (0.8.3) */
 body.light .tile { background: #fff; }
@@ -380,3 +393,6 @@ body.light .tile.on b { color: var(--ink); }
 body.light .tile.on.hot b { color: var(--bad); }
 body.light .tile.on.t-waiting .ti { color: #0A84FF; }
 body.light .tile.on .bolt { color: #F08300; }
+
+button.agentb .bico { font-size: 12px; line-height: 1; flex: none; }
+button.agentb svg.bico { display: block; }

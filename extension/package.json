@@ -2,7 +2,7 @@
   "name": "clodex",
   "displayName": "Clodex",
   "description": "Чаты Claude Code и Codex в одном списке: поиск по тексту, непрочитанные, фильтры.",
-  "version": "0.8.3",
+  "version": "0.9.6",
   "publisher": "clodex",
   "private": true,
   "engines": {
@@ -31,6 +31,11 @@
           "type": "webview",
           "id": "clodex.chats",
           "name": "Чаты"
+        },
+        {
+          "type": "webview",
+          "id": "clodex.screens",
+          "name": "Скриншоты"
         }
       ]
     },
@@ -51,6 +56,11 @@
           "type": "string",
           "default": "Dark Modern",
           "description": "Тёмная тема VS Code для кнопки ☀/☾ в Clodex (название как в Cmd+K Cmd+T)."
+        },
+        "clodex.screenshotsDir": {
+          "type": "string",
+          "default": "",
+          "description": "Папка скриншотов с айфона. Пусто — ~/Claude_AI/06_Загрузки/05_Скриншоты. Команды айфона «Скрин в Clodex» и «В Clodex» сохраняют в iCloud Drive → Команды → Clodex, Clodex переносит оттуда сюда."
         }
       }
     },
@@ -93,6 +103,11 @@
         "command": "clodex.toggleTheme",
         "title": "Clodex: Светлая / тёмная тема VS Code",
         "icon": "$(color-mode)"
+      },
+      {
+        "command": "clodex.screens.refresh",
+        "title": "Clodex: Обновить скриншоты",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {

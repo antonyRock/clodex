@@ -1,0 +1,40 @@
+/* Вкладка «чат с ботом»: цвета — из темы VS Code, поэтому светлая и тёмная тема работают сами. */
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0; font-family: var(--vscode-font-family); font-size: var(--vscode-chat-font-size, 13px);
+  color: var(--vscode-foreground); background: var(--vscode-editor-background); }
+header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 16px; background: var(--vscode-editor-background); border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,.25)); }
+header .tt { flex: 1 1 260px; min-width: 0; }
+header .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+header h1 { margin: 0; font-size: 1.15em; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header .sub { font-size: .85em; opacity: .7; margin-top: 2px; }
+header .sub .live { color: var(--vscode-charts-green, #3fb950); }
+button { font: inherit; font-size: .9em; padding: 5px 11px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--vscode-button-border, transparent); }
+button.main { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+button.main:hover { background: var(--vscode-button-hoverBackground); }
+button.sec { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+button.sec:hover { background: var(--vscode-button-secondaryHoverBackground); }
+main { scroll-margin-top: 80px; max-width: 860px; margin: 0 auto; padding: 14px 16px 40px; display: flex; flex-direction: column; gap: 8px; }
+.day { align-self: center; font-size: .8em; opacity: .6; margin: 10px 0 2px; }
+.msg { max-width: 88%; padding: 8px 12px; border-radius: 12px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg .who { font-size: .78em; opacity: .65; margin-bottom: 3px; }
+.me { align-self: flex-end; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border-bottom-right-radius: 4px; }
+.me .who { color: inherit; }
+.agent { align-self: flex-start; background: var(--vscode-editorWidget-background, rgba(128,128,128,.12));
+  border: 1px solid var(--vscode-panel-border, rgba(128,128,128,.2)); border-bottom-left-radius: 4px; }
+.note { font-size: .85em; opacity: .85; padding: 3px 0; white-space: normal; }
+.files { font-size: .9em; margin-bottom: 4px; white-space: normal; }
+.msg code { font-family: var(--vscode-editor-font-family); font-size: .92em; padding: 0 3px; border-radius: 3px;
+  background: rgba(128,128,128,.18); }
+.me code { background: rgba(255,255,255,.18); }
+.msg .h { font-weight: 600; }
+details.steps { align-self: flex-start; max-width: 88%; font-size: .82em; opacity: .7; margin-left: 4px; }
+details.steps summary { cursor: pointer; }
+details.steps ul { margin: 4px 0 0; padding-left: 18px; }
+details.steps li { overflow-wrap: anywhere; margin: 1px 0; font-family: var(--vscode-editor-font-family); }
+.working { align-self: flex-start; font-size: .9em; opacity: .8; padding: 6px 2px; }
+.working::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px;
+  background: var(--vscode-charts-yellow, #d29922); animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: .25; } }
+.empty { opacity: .6; text-align: center; padding: 40px 0; }

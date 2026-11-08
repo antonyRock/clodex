@@ -55,7 +55,10 @@
   };
   // Активные: агент работает, не прочитан или в чате что-то было за последние 2 часа; фоновые — только пока работают
   const ACTIVE_MS = 2 * 3600e3;
-  const isActive = (i) => i.status === 'working' || (!i.background && (i.status === 'unread' || Date.now() - i.ts < ACTIVE_MS));
+  // значок Telegram: бумажный самолётик в голубом круге
+  const TG_ICON = '<svg class="bico tg" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#2AABEE"/><path fill="#fff" d="M5.4 11.7l11.2-4.3c.5-.2 1 .1.8.9l-1.9 9c-.1.6-.5.8-1 .5l-2.9-2.1-1.4 1.3c-.2.2-.3.3-.6.3l.2-3 5.4-4.9c.2-.2 0-.3-.3-.1l-6.7 4.2-2.9-.9c-.6-.2-.6-.6.1-.9z"/></svg>';
+  const BOT_COOL_MS = 2 * 60e3; // сколько плашка «бот» горит жёлтым после ответа
+  const isActive = (i) => i.status === 'working' || ((!i.background || i.bot) && (i.status === 'unread' || Date.now() - i.ts < ACTIVE_MS)); // бот: разговор за 2 часа — тоже активный
   const BOLT = '<svg class="bolt" viewBox="0 0 16 16"><path d="M9.2 1.5 3.5 9h4l-.9 5.5L12.5 7h-4z" fill="currentColor"/></svg>';
   const ICON = {
     cont: '<svg viewBox="0 0 16 16"><path d="M3 8h8M8 4.5L11.5 8 8 11.5M13.5 3.5v9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -122,6 +125,23 @@
       + `<button class="mi ${st.filter === 'archive' ? 'on' : ''}" data-archmenu="1"><span class="ck">${st.filter === 'archive' ? TILE_ICON.check : ''}</span><span class="ai">${TILE_ICON.disk}</span><span>Архив</span><b>${lastCnt.archive || ''}</b></button>`;
   }
   const closeMenu = () => { $('agentsMenu').hidden = true; };
+
+  // Меню «Размер» (0.8.6): масштаб Clodex и шрифт чатов Claude/Codex (настройка VS Code chat.fontSize)
+  let sizes = { zoom: Number(document.documentElement.dataset.zoom) || 1, chatFont: 13, chatDefault: 13 };
+  document.documentElement.style.zoom = String(sizes.zoom); // сразу, до первой отрисовки
+  function renderSizeMenu() {
+    const r = (label, hint, val, key, minus, plus) => `<div class="srow"><div class="sl"><span>${label}</span><small>${hint}</small></div>`
+      + `<button class="sb" data-${key}="-1" ${minus ? '' : 'disabled'} title="Меньше">−</button><b class="sv">${val}</b><button class="sb" data-${key}="1" ${plus ? '' : 'disabled'} title="Больше">+</button></div>`;
+    const z = Math.round(sizes.zoom * 100);
+    $('sizeMenu').innerHTML = r('Список Clodex', 'эта панель', z + '%', 'zm', z > 70, z < 130)
+      + r('Текст чатов', 'Claude и Codex', sizes.chatFont, 'cf', sizes.chatFont > 10, sizes.chatFont < 24)
+      + '<div class="msep"></div>'
+      + `<button class="mi" data-sreset="1" ${z === 100 && sizes.chatFont === sizes.chatDefault ? 'disabled' : ''}><span>Сбросить: 100% и ${sizes.chatDefault}</span></button>`;
+  }
+  const closeSizeMenu = () => { $('sizeMenu').hidden = true; };
+  // ушли из панели (щелчок в чат, редактор, другое окно) — меню закрываются сами (0.8.7)
+  window.addEventListener('blur', () => { closeSizeMenu(); closeMenu(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { closeSizeMenu(); closeMenu(); } });
   function renderFilters() {
     const v = live();
     const cnt = {
@@ -141,14 +161,33 @@
     $('sum').title = st.filter === 'unread' ? 'Показаны непрочитанные — нажмите, чтобы вернуться к «Недавним»' : cnt.unread ? `Непрочитанных чатов: ${cnt.unread} — нажмите, чтобы показать только их` : 'Показать непрочитанные';
     $('sum').className = 'sum' + (cnt.unread ? ' hot' : '') + (st.filter === 'unread' ? ' on' : '');
     // «Агент N»: сколько фоновых задач сервера работает сейчас (контрольные точки + фоновые чаты в работе)
-    const bgWork = items.filter((i) => i.background && i.status === 'working' && !jobs.some((j) => (i.title || '').startsWith(j)));
+    const bgWork = items.filter((i) => i.background && !i.bot && i.status === 'working' && !jobs.some((j) => (i.title || '').startsWith(j)));
     const nAgent = jobs.length + bgWork.length;
-    const bgDay = items.filter((i) => i.background && Date.now() - i.ts < 24 * 3600e3).length;
+    const bgDay = items.filter((i) => i.background && !i.bot && Date.now() - i.ts < 24 * 3600e3).length;
     const ab = $('agentBadge');
     ab.hidden = !nAgent && !bgDay && st.filter !== 'bg';
     ab.className = 'agentb' + (nAgent ? ' run' : '') + (st.filter === 'bg' ? ' on' : '');
-    ab.innerHTML = nAgent ? `<span class="pulse"></span>агент ${nAgent}` : 'агент';
+    ab.innerHTML = (nAgent ? '<span class="pulse"></span>' : '') + '<span class="bico">🧑‍💻</span>' + (nAgent ? `агент ${nAgent}` : 'агент');
     ab.title = (nAgent ? `На сервере работает фоновых задач: ${nAgent}` + (jobs.length ? ` (${jobs.join(', ')})` : '') : 'Сейчас на сервере ничего не работает') + (bgDay ? `. Фоновых чатов за сутки: ${bgDay}` : '') + '. Нажмите — что делает агент';
+    // «бот»: разговоры с Telegram-ботом. Мигает, пока бот отвечает; клик — только его чаты
+    const botAll = items.filter((i) => i.bot);
+    const botWork = botAll.filter((i) => i.status === 'working');
+    // 2 минуты после ответа — жёлтая: последние правки бота ещё доезжают до Mac
+    const botCool = botWork.length ? [] : botAll.filter((i) => Date.now() - i.ts < BOT_COOL_MS);
+    const botDay = botAll.filter((i) => Date.now() - i.ts < 24 * 3600e3).length;
+    const tb = $('botBadge');
+    tb.hidden = !botAll.length;
+    tb.className = 'agentb' + (botWork.length ? ' run' : botCool.length ? ' cool' : '') + (st.filter === 'tg' ? ' on' : '');
+    tb.innerHTML = (botWork.length ? '<span class="pulse"></span>' : '') + TG_ICON + 'бот';
+    const edits = [...new Set((botWork.length ? botWork : botCool).flatMap((i) => i.editing || []))];
+    tb.title = (botWork.length
+      ? `Telegram-бот сейчас отвечает: «${botWork.map((i) => i.title).join('», «')}».` +
+        (!edits.length && botWork.every((i) => i.agent === 'codex') ? '\nCodex правит файлы командами — какие именно, Clodex не видит.' :
+        edits.length ? `\nПравит файлы:\n${edits.map((f) => '• ' + f).join('\n')}\nЭти файлы с Mac пока не трогайте — изменения могут затереть друг друга.` : '\nФайлов пока не правил.')
+      : botCool.length ? `Telegram-бот ответил ${Math.max(1, Math.round((Date.now() - Math.max(...botCool.map((i) => i.ts))) / 1000))} с назад: «${botCool.map((i) => i.title).join('», «')}». Ещё до 2 минут лучше не ставить задач на те же файлы — его правки доезжают до Mac.` +
+        (edits.length ? `\nПравил файлы:\n${edits.map((f) => '• ' + f).join('\n')}` : '')
+      : `Telegram-бот сейчас молчит.${botDay ? ` Разговоров за сутки: ${botDay}.` : ''}`) +
+      (st.filter === 'tg' ? '\nНажмите — показать все чаты' : '\nНажмите — только чаты бота');
     const hidden = !st.agents.claude || !st.agents.codex;
     $('agentsBtn').classList.toggle('on', hidden || st.filter === 'archive');
     $('agentsBtn').title = (hidden ? `Показаны только чаты ${st.agents.claude ? 'Claude' : 'Codex'}` : 'Фильтр: Claude / Codex') + (st.filter === 'archive' ? '. Открыт архив' : ', архив');
@@ -157,12 +196,12 @@
 
   // Вес чата: сколько токенов перечитывает каждое новое сообщение. Показываем от 100 тыс.
   function weight(i) {
-    if (!i.ctx || i.ctx < 100000 || i.background) return '';
+    if (!i.ctx || i.ctx < 100000 || (i.background && !i.bot)) return ''; // у бота вес важен: каждое сообщение перечитывает весь разговор
     const k = Math.round(i.ctx / 1000);
     const cold = Date.now() - i.ts > 3600000;
     const tip = `Контекст ≈ ${k} тыс. токенов: каждое сообщение в этом чате заново обрабатывает всю историю. ` +
       (cold ? 'Чат давно не трогали — кэш остыл, следующее сообщение загрузит историю по полной цене. ' : '') +
-      'Новую задачу лучше начать в новом чате.';
+      (i.bot ? 'В боте новую тему лучше начинать кнопкой «🆕 Новый чат».' : 'Новую задачу лучше начать в новом чате.');
     return `<span class="wt ${i.ctx >= 200000 ? 'huge' : ''}" title="${tip}">${k}k</span>`;
   }
 
@@ -176,6 +215,7 @@
       ${weight(i)}
       <span class="time" data-ts="${i.ts}">${ago(i.ts)}</span>
       <span class="acts">
+        ${i.bot ? `<button class="ib cont" data-cont="1" title="Продолжить на Mac: новый чат Claude со ссылкой на этот разговор с ботом. Сам разговор бота не меняется.">${ICON.cont}</button>` : ''}
         ${i.agent === 'claude' && i.ctx >= 100000 && !i.background ? `<button class="ib cont" data-cont="1" title="Продолжить в новом чате: откроется новый чат Claude в этой группе, в поле ввода — текст с отсылкой к этому чату. Проверьте и нажмите Enter.">${ICON.cont}</button>` : ''}
         <button class="ib" data-ren="1" title="Переименовать">${ICON.pencil}</button>
         <button class="ib" data-arch="1" title="${i.archived ? 'Вернуть из архива' : 'В архив'}">${i.archived ? ICON.unarchive : ICON.archive}</button>
@@ -229,9 +269,10 @@
     if (st.filter === 'active') v = v.filter((i) => isActive(i) || keep(i));
     if (st.filter === 'waiting') v = v.filter((i) => i.waiting || keep(i));
     if (st.filter === 'recent') v = v.slice(0, 40);
-    if (st.filter === 'bg') v = v.filter((i) => i.background);
+    if (st.filter === 'bg') v = v.filter((i) => i.background && !i.bot);
+    if (st.filter === 'tg') v = v.filter((i) => i.bot);
     if (!v.length) {
-      const msg = { unread: 'Всё прочитано', waiting: 'Никто не ждёт ответа', archive: 'Архив пуст', fav: isGrouped('fav') ? 'Избранного пока нет — наведите на чат или группу и нажмите звёздочку' : 'Избранных чатов нет — наведите на чат и нажмите звёздочку', active: 'Активных нет: никто не работает, не ждёт и не ответил' }[st.filter] || 'Чатов нет';
+      const msg = { unread: 'Всё прочитано', waiting: 'Никто не ждёт ответа', archive: 'Архив пуст', tg: 'Разговоров с ботом нет', fav: isGrouped('fav') ? 'Избранного пока нет — наведите на чат или группу и нажмите звёздочку' : 'Избранных чатов нет — наведите на чат и нажмите звёздочку', active: 'Активных нет: никто не работает, не ждёт и не ответил' }[st.filter] || 'Чатов нет';
       list.innerHTML = `<div class="empty">${msg}</div>`;
       return;
     }
@@ -269,6 +310,13 @@
   // ---------- нажатия ----------
   document.addEventListener('click', (e) => {
     if (!e.target.closest('#agentsMenu') && !e.target.closest('#agentsBtn')) closeMenu();
+    if (!e.target.closest('#sizeMenu') && !e.target.closest('#sizeBtn')) closeSizeMenu();
+    if (e.target.closest('#sizeBtn')) { const m = $('sizeMenu'); m.hidden = !m.hidden; if (!m.hidden) renderSizeMenu(); return; }
+    const zb = e.target.closest('[data-zm]');
+    if (zb) { vscode.postMessage({ type: 'zoom', value: Math.round((sizes.zoom + 0.1 * Number(zb.dataset.zm)) * 10) / 10 }); return; }
+    const cb = e.target.closest('[data-cf]');
+    if (cb) { vscode.postMessage({ type: 'chatFont', value: sizes.chatFont + Number(cb.dataset.cf) }); return; }
+    if (e.target.closest('[data-sreset]')) { vscode.postMessage({ type: 'zoom', value: 1 }); vscode.postMessage({ type: 'chatFont', value: null }); return; }
     const f = e.target.closest('[data-f]');
     if (f) {
       if (f.dataset.f === st.filter) st.grouped[st.filter] = !isGrouped(st.filter); // повторное нажатие — группы / список
@@ -286,6 +334,7 @@
     if (e.target.closest('#newGroup') || e.target.closest('[data-addgroup]')) { vscode.postMessage({ type: 'newGroup' }); return; }
     if (e.target.closest('#themeBtn')) { vscode.postMessage({ type: 'toggleVsTheme' }); return; }
     if (e.target.closest('#foldAll')) { vscode.postMessage({ type: 'collapseAll', value: !allFolded() }); return; }
+    if (e.target.closest('#botBadge')) { st.filter = st.filter === 'tg' ? 'all' : 'tg'; save(); render(); return; }
     if (e.target.closest('#agentBadge')) { if (st.filter === 'bg') { st.filter = 'all'; save(); render(); } else vscode.postMessage({ type: 'agentJobs' }); return; }
     if (e.target.closest('#sum')) { st.filter = st.filter === 'unread' ? 'all' : 'unread'; if (results) { q.value = ''; onSearch(); } save(); render(); return; }
     if (e.target.closest('#agentsBtn')) { const m = $('agentsMenu'); m.hidden = !m.hidden; if (!m.hidden) renderMenu(); return; }
@@ -464,10 +513,17 @@
     }
     if (m.type === 'current') { sticky = m.key; if (!dragG) render(); }
     if (m.type === 'theme') applyTheme(!!m.light);
+    if (m.type === 'sizes') {
+      sizes = { zoom: m.zoom, chatFont: m.chatFont, chatDefault: m.chatDefault };
+      document.documentElement.style.zoom = String(m.zoom);
+      $('sizeBtn').classList.toggle('on', m.zoom !== 1 || m.chatFont !== m.chatDefault);
+      if (!$('sizeMenu').hidden) renderSizeMenu();
+    }
     if (m.type === 'focusSearch') { q.focus(); q.select(); }
     if (m.type === 'filter') { st.filter = m.filter; if (results) { q.value = ''; onSearch(); } save(); render(); }
   });
 
+  setInterval(() => { if (items.length) renderFilters(); }, 15000); // жёлтая плашка «бот» гаснет сама
   setInterval(() => document.querySelectorAll('[data-ts]').forEach((el) => { el.textContent = ago(+el.dataset.ts); }), 30000);
   vscode.postMessage({ type: 'ready' });
   if (st.q) onSearch();
