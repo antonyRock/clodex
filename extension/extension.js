@@ -9,7 +9,7 @@ const BG_GROUP = 'Фоновые'; // сессии `claude -p` (ночные з�
 // Реестр проектов рабочей папки агента: ярлык ~/Claude_AI ставит комплект установки.
 const REGISTRY = path.join(HOME, 'Claude_AI', '03_Проекты', '00_Реестр проектов.md');
 // При первом запуске переносится состояние прежней сборки Clodex с другим издателем (<кто-то>.clodex).
-const STATE_KEYS = ['initialized', 'seen', 'groupOverride', 'groupAlias', 'dissolved', 'groupOrder', 'collapsed', 'archived', 'titles', 'favorites', 'favChats'];
+const STATE_KEYS = ['initialized', 'seen', 'groupOverride', 'groupAlias', 'dissolved', 'groupOrder', 'collapsed', 'archived', 'titles', 'favorites', 'favChats', 'manualUnread'];
 
 const WORKING_MS = 3 * 60 * 1000;  // файл менялся недавно и ответа нет — агент работает
 const POLL_VISIBLE = 4000;
@@ -73,6 +73,14 @@ class ClodexView {
   async setSeen(key, t) {
     const s = { ...this.seen, [key]: t };
     await this.ctx.globalState.update('seen', s);
+  }
+  // Ручная метка «не прочитано»: держится, пока чат не откроют снова (через Clodex или переключившись на его вкладку).
+  get manualUnread() { return this.ctx.globalState.get('manualUnread', {}); }
+  async setRead(key, read) {
+    const m = { ...this.manualUnread };
+    if (read) delete m[key]; else m[key] = Date.now();
+    await this.ctx.globalState.update('manualUnread', m);
+    await this.setSeen(key, read ? Date.now() : 0);
   }
 
   loadCache() {
@@ -144,7 +152,11 @@ class ClodexView {
     if (!t || !(t.input instanceof vscode.TabInputWebview) || !t.input.viewType.includes('claudeVSCodePanel')) return;
     const c = (this.chats || []).filter((x) => x.agent === 'claude' && x.title === t.label)
       .sort((a, b) => (b.mtime || 0) - (a.mtime || 0))[0];
-    if (c && (force || c.key !== this._current)) { this._current = c.key; this.post({ type: 'current', key: c.key }); }
+    if (c && (force || c.key !== this._current)) {
+      const switched = this._current && c.key !== this._current;
+      this._current = c.key; this.post({ type: 'current', key: c.key });
+      if (switched && vscode.window.state.focused && c.key in this.manualUnread) this.setRead(c.key, true).then(() => this.push());
+    }
   }
 
   // Чат Claude открыт во вкладке и окно активно — значит, прочитан.
@@ -157,15 +169,17 @@ class ClodexView {
     }
     if (!labels.size) return;
     const seen = this.seen;
+    const manual = this.manualUnread;
     let upd = false;
     for (const c of this.chats) {
-      if (c.agent === 'claude' && labels.has(c.title) && this.isUnread(c, seen)) { seen[c.key] = Date.now(); upd = true; }
+      if (c.agent === 'claude' && labels.has(c.title) && !(c.key in manual) && this.isUnread(c, seen)) { seen[c.key] = Date.now(); upd = true; }
     }
     if (upd) this.ctx.globalState.update('seen', seen).then(() => this.push());
   }
 
   isUnread(c, seen) {
     if (c.background) return false; // фоновые не шумят «непрочитанным»
+    if (c.key in this.manualUnread) return true;
     const s = (seen || this.seen)[c.key] || 0;
     return c.finished && c.lastAssistantTs > s && c.lastAssistantTs >= c.lastUserTs;
   }
@@ -324,6 +338,7 @@ class ClodexView {
     const s = this.seen;
     for (const c of this.chats) s[c.key] = Date.now();
     await this.ctx.globalState.update('seen', s);
+    await this.ctx.globalState.update('manualUnread', {});
     this.push();
   }
 
@@ -331,7 +346,7 @@ class ClodexView {
   async open(key) {
     const c = this.byKey.get(key);
     if (!c) return;
-    await this.setSeen(key, Date.now());
+    await this.setRead(key, true);
     this.push();
     if (c.background) return this.openTranscript(c);
     if (!this.installed()[c.agent]) return this.notInstalled(c.agent);
@@ -405,7 +420,7 @@ class ClodexView {
       { label: '$(copy) Скопировать название', id: 'copy' },
     ], { placeHolder: this.titleOf(c) });
     if (!pick) return;
-    if (pick.id === 'read') await this.setSeen(key, unread ? Date.now() : 0);
+    if (pick.id === 'read') await this.setRead(key, unread);
     if (pick.id === 'copy') await vscode.env.clipboard.writeText(c.title);
     if (pick.id === 'archive') return this.setArchived(key, !this.isArchived(c));
     if (pick.id === 'rename') return this.rename(key);
@@ -610,7 +625,7 @@ class ClodexView {
       if (m.type === 'new') this.newChat(m.agent, m.group);
       if (m.type === 'toggleRead') {
         const c = this.byKey.get(m.key);
-        if (c) { await this.setSeen(m.key, this.isUnread(c) ? Date.now() : 0); this.push(); }
+        if (c) { await this.setRead(m.key, this.isUnread(c)); this.push(); }
       }
       if (m.type === 'collapse') {
         await this.ctx.globalState.update('collapsed', { ...this.ctx.globalState.get('collapsed', {}), [m.group]: m.value });
