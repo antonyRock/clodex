@@ -103,31 +103,30 @@ button { font: inherit; cursor: pointer; }
 .searchbox input:focus { border-color: rgba(139,124,255,.6); box-shadow: 0 0 0 3px rgba(139,124,255,.15); }
 body.light .searchbox input:focus { border-color: #262626; box-shadow: 0 0 0 3px rgba(255,221,45,.4); }
 body.light .searchbox input { box-shadow: 0 1px 2px rgba(0,0,0,.04); }
-/* «Новый чат: Claude | Codex» — одна плашка-переключатель на всю ширину */
-.newchat {
-  display: flex; align-items: stretch; margin-top: 7px; padding: 3px; gap: 3px; border-radius: 11px;
+/* Новый чат — две компактные кнопки справа от поиска: «+» и логотип агента */
+.searchbox .nb {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 2px;
+  height: 31px; padding: 0 8px 0 6px; border-radius: 10px; color: var(--muted);
   background: linear-gradient(180deg, var(--gl-top), var(--gl-bot)); border: 1px solid var(--gl-edge); box-shadow: inset 0 1px 0 var(--gl-hi);
+  transition: background .15s, border-color .15s, color .15s, transform .1s;
 }
-.newchat .nl {
-  display: inline-flex; align-items: center; gap: 4px; padding: 0 6px 0 5px; flex: none;
-  font-size: 11.5px; font-weight: 600; color: var(--muted); white-space: nowrap;
-}
-.newchat .nl svg { width: 12px; height: 12px; }
-.newchat .nb {
-  flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 5px 8px; border: none; border-radius: 8px; font-size: 12px; font-weight: 650; color: var(--ink);
-  background: rgba(255,255,255,.05); transition: background .15s, box-shadow .15s, transform .1s;
-}
-.newchat .nb:hover { transform: translateY(-.5px); }
-.newchat .nb:active { transform: scale(.98); }
-.newchat .nb.claude:hover { background: rgba(217,119,87,.18); box-shadow: inset 0 0 0 1px rgba(217,119,87,.45); }
-.newchat .nb.codex:hover { background: rgba(255,255,255,.10); box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
-.newchat .nbi { display: inline-flex; }
-.newchat .nb .ag.logo svg { width: 15px; height: 15px; }
-body.light .newchat { background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
-body.light .newchat .nb { background: #EFEFF2; }
-body.light .newchat .nb.claude:hover { background: rgba(217,119,87,.13); box-shadow: inset 0 0 0 1px rgba(217,119,87,.5); }
-body.light .newchat .nb.codex:hover { background: rgba(0,0,0,.06); box-shadow: inset 0 0 0 1px rgba(0,0,0,.18); }
+.searchbox .nb .pl { width: 11px; height: 11px; }
+.searchbox .nb .nbi { display: inline-flex; }
+.searchbox .nb .ag.logo svg { width: 16px; height: 16px; }
+.searchbox .nb:hover { color: var(--ink); transform: translateY(-.5px); }
+.searchbox .nb:active { transform: scale(.96); }
+.searchbox .nb.claude:hover { background: rgba(217,119,87,.18); border-color: rgba(217,119,87,.55); }
+.searchbox .nb.codex:hover { background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.3); }
+body.light .searchbox .nb { background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+body.light .searchbox .nb.claude:hover { background: rgba(217,119,87,.12); border-color: rgba(217,119,87,.6); }
+body.light .searchbox .nb.codex:hover { background: rgba(0,0,0,.05); border-color: rgba(0,0,0,.25); }
+
+/* счётчик новых — он же фильтр «непрочитанные» */
+button.sum { border: 1px solid transparent; background: transparent; padding: 2px 7px; border-radius: 999px; font: inherit; font-size: 11px; }
+button.sum:hover { background: var(--hover); }
+button.sum.on { border-color: currentColor; background: rgba(255,90,90,.12); }
+body.light button.sum.on { background: rgba(220,50,50,.08); }
+#agentsBtn.on { color: var(--a3); background: var(--hover); }
 
 /* фильтры */
 .row { margin-top: 8px; }
@@ -277,9 +276,13 @@ body.light .chat.current { background: rgba(255,221,45,.28); box-shadow: inset 2
 .time { color: var(--muted); font-size: 11px; flex: none; font-variant-numeric: tabular-nums; }
 .acts { display: none; flex: none; gap: 1px; }
 .chat:hover .time { display: none; }
+.wt { flex: none; font-size: 10px; padding: 0 4px; border-radius: 4px; color: #b58900; border: 1px solid rgba(181,137,0,.45); font-variant-numeric: tabular-nums; }
+.wt.huge { color: #d9534f; border-color: rgba(217,83,79,.5); }
+.chat:hover .wt { display: none; }
 .chat:hover .acts { display: inline-flex; }
 .acts .ib { width: 20px; height: 20px; }
 .acts .ib svg { width: 14px; height: 14px; }
+.acts .ib.cont { color: #b58900; }
 .snip { flex-basis: 100%; color: var(--muted); font-size: 11px; line-height: 1.4; padding-left: 31px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 mark { background: rgba(139,124,255,.35); color: inherit; border-radius: 3px; padding: 0 1px; }
 body.light mark { background: rgba(255,221,45,.6); }
@@ -291,9 +294,9 @@ body.light mark { background: rgba(255,221,45,.6); }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
 /* Агент не установлен — кнопка серая и не нажимается */
-.newchat .nb:disabled, .chip:disabled { opacity: .38; cursor: not-allowed; transform: none; box-shadow: none; }
-.newchat .nb:disabled:hover { background: rgba(255,255,255,.05); }
-body.light .newchat .nb:disabled:hover { background: #EFEFF2; }
+.searchbox .nb:disabled, .chip:disabled { opacity: .38; cursor: not-allowed; transform: none; box-shadow: none; }
+.searchbox .nb:disabled:hover { background: transparent; }
+body.light .searchbox .nb:disabled:hover { background: #fff; }
 .chip:disabled:hover { background: transparent; color: var(--muted); }
 
 /* звезда у чата: поменьше, при наведении на чат — контур, в избранном — жёлтая всегда */
@@ -306,3 +309,5 @@ body.light .newchat .nb:disabled:hover { background: #EFEFF2; }
 body.light .cstar.on, body.light .cstar:hover { color: #E5A800; }
 body.light .cstar.on svg { fill: #FFDD2D; stroke: #E5A800; }
 .cstar.pop svg { animation: starpop .35s ease-out; }
+
+.ib:disabled { opacity: .35; cursor: default; background: transparent; }

@@ -39,8 +39,9 @@ function newChat(agent, id, file) {
   return {
     key: (agent === 'claude' ? 'c:' : 'x:') + id, agent, id, file,
     title: '', aiTitle: '', customTitle: '', firstUser: '', cwd: '',
-    lastTs: 0, lastUserTs: 0, lastAssistantTs: 0, lastAssistantText: '',
+    lastTs: 0, lastUserTs: 0, lastAssistantTs: 0, lastAssistantText: '', lastUserText: '',
     finished: true, text: '', msgCount: 0,
+    ctx: 0, // размер контекста на последнем шаге агента, токенов (сколько перечитывает каждое новое сообщение)
   };
 }
 
@@ -82,7 +83,7 @@ function parseClaude(content, id, file) {
       if (!text) continue;
       if (text.startsWith('[Request interrupted')) { chat.finished = true; continue; }
       if (!chat.firstUser) chat.firstUser = text.slice(0, 200);
-      chat.lastUserTs = t; chat.lastTs = Math.max(chat.lastTs, t);
+      chat.lastUserTs = t; chat.lastTs = Math.max(chat.lastTs, t); chat.lastUserText = text.slice(0, 600);
       chat.finished = false;
       addText(chat, 'user', text);
     } else {
@@ -90,8 +91,10 @@ function parseClaude(content, id, file) {
       const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
       const stop = d.message && d.message.stop_reason;
       if (t) chat.lastTs = Math.max(chat.lastTs, t);
+      const u = d.message && d.message.usage;
+      if (u) chat.ctx = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
       if (text) {
-        chat.lastAssistantTs = t; chat.lastAssistantText = text.slice(-600);
+        chat.lastAssistantTs = t; chat.lastAssistantText = text.slice(-1200);
         addText(chat, 'assistant', text);
       }
       chat.finished = stop === 'end_turn' || stop === 'stop_sequence' || (text && !blocks.some((b) => b.type === 'tool_use') && stop !== 'tool_use');
@@ -123,6 +126,7 @@ function parseCodex(content, file) {
     const t = ts(d.timestamp);
     if (d.type === 'event_msg') {
       if (p.type === 'task_started') chat.finished = false;
+      if (p.type === 'token_count' && p.info && p.info.last_token_usage) chat.ctx = p.info.last_token_usage.input_tokens || chat.ctx;
       if (p.type === 'task_complete' || p.type === 'turn_aborted') chat.finished = true;
       continue;
     }
@@ -132,12 +136,12 @@ function parseCodex(content, file) {
         const text = cleanCodexUser(raw);
         if (!text) continue;
         if (!chat.firstUser) chat.firstUser = text.slice(0, 200);
-        chat.lastUserTs = t; chat.lastTs = Math.max(chat.lastTs, t);
+        chat.lastUserTs = t; chat.lastTs = Math.max(chat.lastTs, t); chat.lastUserText = text.slice(0, 600);
         addText(chat, 'user', text);
       } else {
         const text = raw.trim();
         if (!text) continue;
-        chat.lastAssistantTs = t; chat.lastAssistantText = text.slice(-600);
+        chat.lastAssistantTs = t; chat.lastAssistantText = text.slice(-1200);
         chat.lastTs = Math.max(chat.lastTs, t);
         addText(chat, 'assistant', text);
       }

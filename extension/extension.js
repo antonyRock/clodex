@@ -58,7 +58,7 @@ class ClodexView {
     this.view = null;
     this.chats = [];
     this.byKey = new Map();
-    this.cacheFile = path.join(context.globalStorageUri.fsPath, 'cache-v2.json');
+    this.cacheFile = path.join(context.globalStorageUri.fsPath, 'cache-v4.json');
     this.scanner = new Scanner(this.loadCache());
     this.scanning = false;
     this.lastQuery = '';
@@ -253,7 +253,7 @@ class ClodexView {
       key: c.key, agent: c.agent, title: this.titleOf(c), group: this.groupOf(c),
       ts: c.lastTs, status: this.status_(c, seen),
       waiting: c.finished && c.lastAssistantTs >= c.lastUserTs && isQuestion(c.lastAssistantText),
-      archived: this.isArchived(c), background: !!c.background,
+      archived: this.isArchived(c), background: !!c.background, ctx: c.ctx || 0,
     }));
   }
 
@@ -407,12 +407,61 @@ class ClodexView {
     }
   }
 
+  // Продолжить тяжёлый чат в новом: новый чат Claude в той же группе, в поле ввода — фраза с отсылкой к старому.
+  // Текст не отправляется сам: человек проверяет и жмёт Enter.
+  continuePrompt(c) {
+    const k = Math.round((c.ctx || 0) / 1000);
+    const one = (t) => (t || '').replace(/\s+/g, ' ').trim();
+    // Обрезка по границе фразы/слова, без кусков слов («…чу проверить»)
+    const head = (t, n) => { t = one(t); if (t.length <= n) return t; const cut = t.slice(0, n); const i = cut.lastIndexOf(' '); return (i > n * 0.6 ? cut.slice(0, i) : cut) + '…'; };
+    const tailOf = (t, n) => {
+      t = one(t); if (t.length <= n) return t;
+      const cut = t.slice(-n);
+      const m = cut.match(/[.!?»)]\s+(?=[А-ЯЁA-Z«*\d])/);
+      if (m && m.index < n * 0.5) return '…' + cut.slice(m.index + m[0].length);
+      const i = cut.indexOf(' ');
+      return '…' + (i >= 0 && i < 40 ? cut.slice(i + 1) : cut);
+    };
+    const q = head(c.lastUserText, 300);
+    const a = tailOf(c.lastAssistantText, 300);
+    // Коротко: CLAUDE.md подгружается сам, вес чата агенту не нужен
+    return `Продолжение чата «${this.titleOf(c)}» (название может быть неточным).` +
+      (q ? `\nПоследний вопрос: «${q}»` : '') +
+      (a ? `\nКонец ответа: «${a}»` : '') +
+      `\nНе хватит контекста — журнал проекта, потом конец старого чата: ${c.file}`;
+  }
+
+  async continueChat(key) {
+    const c = this.byKey.get(key);
+    if (!c) return;
+    if (c.agent !== 'claude') {
+      vscode.window.showInformationMessage('Clodex: продолжить в новом чате пока можно только для Claude — для Codex способ передать стартовый текст не найден.');
+      return;
+    }
+    if (!this.installed().claude) return this.notInstalled('claude');
+    const prompt = this.continuePrompt(c);
+    await this.gs.update('lastAgent', 'claude');
+    this.pending = { group: this.groupOf(c), agent: 'claude', t: Date.now(), known: new Set(this.chats.map((x) => x.key)) };
+    this.push();
+    try {
+      // claude-vscode.editor.open(sessionId, initialPrompt): без sessionId — новый чат, текст встаёт в поле ввода
+      await vscode.commands.executeCommand('claude-vscode.editor.open', undefined, prompt);
+      log.info('продолжение в новом чате: ' + c.key);
+    } catch (e) {
+      await vscode.env.clipboard.writeText(prompt);
+      try { await vscode.commands.executeCommand('claude-vscode.newConversation'); } catch {}
+      vscode.window.showWarningMessage('Clodex: не удалось вписать текст в новый чат — он скопирован, вставьте Cmd+V.');
+      log.error('продолжение в новом чате: ' + (e.message || e));
+    }
+  }
+
   async menu(key) {
     const c = this.byKey.get(key);
     if (!c) return;
     const unread = this.isUnread(c);
     const pick = await vscode.window.showQuickPick([
       { label: unread ? '$(check) Отметить прочитанным' : '$(circle-filled) Отметить непрочитанным', id: 'read' },
+      ...(c.agent === 'claude' && !c.background ? [{ label: '$(arrow-right) Продолжить в новом чате', description: c.ctx ? `сейчас ~${Math.round(c.ctx / 1000)} тыс. токенов` : '', id: 'continue' }] : []),
       { label: '$(edit) Переименовать…', id: 'rename' },
       { label: '$(folder) Перенести в группу…', id: 'group' },
       { label: this.isArchived(c) ? '$(inbox) Вернуть из архива' : '$(archive) В архив', id: 'archive' },
@@ -424,6 +473,7 @@ class ClodexView {
     if (pick.id === 'copy') await vscode.env.clipboard.writeText(c.title);
     if (pick.id === 'archive') return this.setArchived(key, !this.isArchived(c));
     if (pick.id === 'rename') return this.rename(key);
+    if (pick.id === 'continue') return this.continueChat(key);
     if (pick.id === 'ungroup') {
       const o = { ...this.groupOverride }; delete o[key];
       await this.ctx.globalState.update('groupOverride', o);
@@ -581,15 +631,9 @@ class ClodexView {
 <link rel="stylesheet" href="${css}"></head><body>
 <div id="grid"></div>
 <div id="top">
-  <div class="brand"><span class="word">Clodex</span><span class="sq"></span><span id="sum" class="sum"></span>
-    <span class="tools"><button id="newGroup" class="ib pill" title="Создать новую группу"><svg viewBox="0 0 16 16"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.5h5.6c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7v4M6 9h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>Группа</button><button id="themeBtn" class="ib" title="Светлая / тёмная тема VS Code"></button><button id="expandAll" class="ib" title="Раскрыть все группы"><svg viewBox="0 0 16 16"><path d="M4 4l4 3.5L12 4M4 8.5 8 12l4-3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button id="collapseAll" class="ib" title="Свернуть все группы"><svg viewBox="0 0 16 16"><path d="M4 7.5 8 4l4 3.5M4 12l4-3.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span></div>
-  <div class="searchbox"><input id="q" type="search" placeholder="Поиск по тексту чатов…" spellcheck="false">
-  </div>
-  <div class="newchat">
-    <span class="nl"><svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Новый чат:</span>
-    <button class="nb claude" data-new="claude" title="Начать новый чат с Claude"><span class="nbi"><span class="ag claude">C</span></span>Claude</button>
-    <button class="nb codex" data-new="codex" title="Начать новый чат с Codex"><span class="nbi"><span class="ag codex">X</span></span>Codex</button>
-  </div>
+  <div class="brand"><span class="word">Clodex</span><span class="sq"></span><button id="sum" class="sum"></button>
+    <span class="tools"><button id="newGroup" class="ib" title="Создать новую группу"><svg viewBox="0 0 16 16"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.5h5.6c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7v4M6 9h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button><button id="themeBtn" class="ib" title="Светлая / тёмная тема VS Code"></button><button id="foldAll" class="ib"></button><button id="agentsBtn" class="ib" title="Чьи чаты показывать: Claude / Codex"><svg viewBox="0 0 16 16"><path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.2V8.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button></span></div>
+  <div class="searchbox"><input id="q" type="search" placeholder="Поиск по тексту чатов…" spellcheck="false"><button class="nb claude" data-new="claude" title="Новый чат с Claude"><svg class="pl" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="nbi"><span class="ag claude">C</span></span></button><button class="nb codex" data-new="codex" title="Новый чат с Codex"><svg class="pl" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span class="nbi"><span class="ag codex">X</span></span></button></div>
   <div class="row"><div id="filters"></div></div>
 </div>
 <div id="list"></div>
@@ -602,6 +646,7 @@ class ClodexView {
       if (m.type === 'menu') this.menu(m.key);
       if (m.type === 'groupMenu') this.groupMenu(m.group);
       if (m.type === 'rename') this.rename(m.key);
+      if (m.type === 'continue') this.continueChat(m.key);
       if (m.type === 'newGroup') this.newGroup();
       if (m.type === 'move') this.moveToGroup(m.key, m.group);
       if (m.type === 'favChat') {
@@ -622,6 +667,11 @@ class ClodexView {
       if (m.type === 'archive') { const c = this.byKey.get(m.key); if (c) this.setArchived(m.key, !this.isArchived(c)); }
       if (m.type === 'order') { await this.gs.update('groupOrder', m.order); this.push(); }
       if (m.type === 'collapseAll') this.setAllCollapsed(m.value);
+      if (m.type === 'agentsMenu') {
+        const opts = ['claude', 'codex'].map((k) => ({ label: k === 'claude' ? 'Claude' : 'Codex', key: k, picked: !!(m.agents || {})[k] }));
+        const sel = await vscode.window.showQuickPick(opts, { canPickMany: true, placeHolder: 'Чьи чаты показывать' });
+        if (sel) view.webview.postMessage({ type: 'agents', value: { claude: sel.some((o) => o.key === 'claude'), codex: sel.some((o) => o.key === 'codex') } });
+      }
       if (m.type === 'new') this.newChat(m.agent, m.group);
       if (m.type === 'toggleRead') {
         const c = this.byKey.get(m.key);
