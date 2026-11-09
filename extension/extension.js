@@ -76,7 +76,7 @@ class ClodexView {
     this.view = null;
     this.chats = [];
     this.byKey = new Map();
-    this.cacheFile = path.join(context.globalStorageUri.fsPath, 'cache-v8.json');
+    this.cacheFile = path.join(context.globalStorageUri.fsPath, 'cache-v11.json');
     this.scanner = new Scanner(this.loadCache());
     this.scanning = false;
     this.lastQuery = '';
@@ -276,13 +276,23 @@ class ClodexView {
     return res;
   }
 
+  // Чат партии ↔ работающая задача сервера: по папке задачи, упомянутой в задании
+  jobOf(c, jobs) {
+    if (!c.job || !c.jobDirs) return null;
+    return (jobs || this.jobs()).find((j) => j.running && c.jobDirs.includes(j.folder)) || null;
+  }
+
   payload() {
     const seen = this.seen;
+    const jobs = this.jobs();
     return this.chats.map((c) => ({
       key: c.key, agent: c.agent, title: this.titleOf(c), group: this.groupOf(c),
       ts: c.lastTs, status: this.status_(c, seen),
       waiting: c.finished && c.lastAssistantTs >= c.lastUserTs && isQuestion(c.lastAssistantText),
       archived: this.isArchived(c), background: !!c.background, bot: !!c.bot, ctx: c.ctx || 0,
+      // к какой задаче относится партия (и закончившаяся тоже): в списке показываем только последнюю партию задачи
+      jobFolder: c.job ? ((jobs.find((j) => (c.jobDirs || []).includes(j.folder)) || {}).folder || this.titleOf(c).replace(/\s+—\s+партия.*$/, '')) : undefined,
+      job: (() => { const j = this.jobOf(c, jobs); return j ? { name: j.name, pct: j.pct, progress: j.progress, batch: j.batch } : undefined; })(),
       // бот: файлы, которые он правил за последние 15 минут (путь от Claude_AI) — подсказка плашки «бот»
       editing: c.bot ? (c.edits || []).filter((e) => Date.now() - e.t < 15 * 60e3).map((e) => e.f.replace(/^.*\/memory\//, 'память агента: ').replace(/^.*?Claude_AI\//, '')) : undefined,
     }));
@@ -323,7 +333,7 @@ class ClodexView {
   push() {
     const items = this.payload();
     this.updateBadge(items);
-    this.post({ type: 'data', items, jobs: this.jobs().filter((j) => j.running).map((j) => j.name), collapsed: this.gs.get('collapsed', {}), order: this.gs.get('groupOrder', []), icons: this.agentIcons(), installed: this.installed(), customGroups: this.customGroups, favorites: this.gs.get('favorites', {}), favChats: this.gs.get('favChats', {}), lastAgent: this.gs.get('lastAgent', 'claude') });
+    this.post({ type: 'data', items, jobs: this.jobs().filter((j) => j.running).map((j) => j.name), jobPct: this.jobs().filter((j) => j.running).map((j) => j.pct), collapsed: this.gs.get('collapsed', {}), order: this.gs.get('groupOrder', []), icons: this.agentIcons(), installed: this.installed(), customGroups: this.customGroups, favorites: this.gs.get('favorites', {}), favChats: this.gs.get('favChats', {}), lastAgent: this.gs.get('lastAgent', 'claude') });
     if (this.lastQuery) this.post({ type: 'results', q: this.lastQuery, results: search(this.chats, this.lastQuery, this.gs.get('titles', {})) });
     if (!this._currentSent) { this._currentSent = true; this.postCurrent(true); } // один раз после первой загрузки
   }
@@ -344,7 +354,7 @@ class ClodexView {
     this._jobsAt = 0;
     const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'только что' : m < 60 ? `${m} мин назад` : `${Math.round(m / 60)} ч назад`; };
     const jobs = this.jobs().filter((j) => j.running);
-    const bg = this.chats.filter((c) => c.background && !c.bot && this.status_(c) === 'working' && !jobs.some((j) => this.titleOf(c).startsWith(j.name)));
+    const bg = this.chats.filter((c) => c.background && !c.bot && this.status_(c) === 'working' && !this.jobOf(c, jobs) && !jobs.some((j) => this.titleOf(c).startsWith(j.name)));
     const recent = this.chats.filter((c) => c.background && !c.bot && this.status_(c) !== 'working' && Date.now() - (c.mtime || 0) < 24 * 3600e3)
       .sort((a, b) => (b.mtime || 0) - (a.mtime || 0)).slice(0, 8);
     const items = [];
@@ -587,7 +597,12 @@ class ClodexView {
     this.push();
     try {
       if (agent === 'codex') await vscode.commands.executeCommand('chatgpt.newCodexPanel');
-      else await vscode.commands.executeCommand('claude-vscode.newConversation');
+      else {
+        // «Новый чат» Claude Code срабатывает, только если его вкладка видна на экране; иначе молча ничего не делает
+        // (например, открыт протокол фоновой партии). Тогда открываем новую вкладку Claude (0.9.10).
+        const shown = vscode.window.tabGroups.all.some((g) => g.activeTab && g.activeTab.input && /claudeVSCodePanel/.test(g.activeTab.input.viewType || ''));
+        await vscode.commands.executeCommand(shown ? 'claude-vscode.newConversation' : 'claude-vscode.editor.open');
+      }
     } catch (e) {
       vscode.window.showErrorMessage(`Clodex: не удалось создать чат: ${e.message || e}`);
     }

@@ -25,6 +25,7 @@
     : `<span class="ag ${a}" title="${tip || ''}">${a === 'claude' ? 'C' : 'X'}</span>`;
   let results = null, resultQ = '';
   let jobs = []; // названия фоновых задач сервера, которые работают сейчас
+  let jobPct = []; // их процент (по контрольной точке), null — неизвестен
 
   const $ = (id) => document.getElementById(id);
   const list = $('list'), q = $('q');
@@ -161,14 +162,15 @@
     $('sum').title = st.filter === 'unread' ? 'Показаны непрочитанные — нажмите, чтобы вернуться к «Недавним»' : cnt.unread ? `Непрочитанных чатов: ${cnt.unread} — нажмите, чтобы показать только их` : 'Показать непрочитанные';
     $('sum').className = 'sum' + (cnt.unread ? ' hot' : '') + (st.filter === 'unread' ? ' on' : '');
     // «Агент N»: сколько фоновых задач сервера работает сейчас (контрольные точки + фоновые чаты в работе)
-    const bgWork = items.filter((i) => i.background && !i.bot && i.status === 'working' && !jobs.some((j) => (i.title || '').startsWith(j)));
+    const bgWork = items.filter((i) => i.background && !i.bot && !i.job && i.status === 'working' && !jobs.some((j) => (i.title || '').startsWith(j)));
     const nAgent = jobs.length + bgWork.length;
+    const onePct = nAgent === 1 && jobs.length === 1 && jobPct[0] != null ? jobPct[0] : null; // одна задача — показываем её процент
     const bgDay = items.filter((i) => i.background && !i.bot && Date.now() - i.ts < 24 * 3600e3).length;
     const ab = $('agentBadge');
     ab.hidden = !nAgent && !bgDay && st.filter !== 'bg';
     ab.className = 'agentb' + (nAgent ? ' run' : '') + (st.filter === 'bg' ? ' on' : '');
-    ab.innerHTML = (nAgent ? '<span class="pulse"></span>' : '') + '<span class="bico">🧑‍💻</span>' + (nAgent ? `агент ${nAgent}` : 'агент');
-    ab.title = (nAgent ? `На сервере работает фоновых задач: ${nAgent}` + (jobs.length ? ` (${jobs.join(', ')})` : '') : 'Сейчас на сервере ничего не работает') + (bgDay ? `. Фоновых чатов за сутки: ${bgDay}` : '') + '. Нажмите — что делает агент';
+    ab.innerHTML = (nAgent ? '<span class="spin"></span>' : '') + '<span class="bico">🧑‍💻</span>' + (onePct != null ? `агент · ${onePct}%` : nAgent ? `агент ${nAgent}` : 'агент');
+    ab.title = (nAgent ? `На сервере работает фоновых задач: ${nAgent}` + (jobs.length ? ` (${jobs.map((j, k) => j + (jobPct[k] != null ? ` — ${jobPct[k]}%` : '')).join(', ')})` : '') : 'Сейчас на сервере ничего не работает') + (bgDay ? `. Фоновых чатов за сутки: ${bgDay}` : '') + '. Нажмите — что делает агент';
     // «бот»: разговоры с Telegram-ботом. Мигает, пока бот отвечает; клик — только его чаты
     const botAll = items.filter((i) => i.bot);
     const botWork = botAll.filter((i) => i.status === 'working');
@@ -206,13 +208,14 @@
   }
 
   function row(i, snippet) {
-    const tip = i.status === 'unread' ? 'Не прочитан — нажмите, чтобы отметить прочитанным' : i.status === 'working' ? 'Агент работает' : 'Прочитан — нажмите, чтобы вернуть «не прочитано»';
+    const tip = i.status === 'unread' ? 'Не прочитан — нажмите, чтобы отметить прочитанным' : i.status === 'working' ? (i.job ? `Идёт фоновая задача: ${i.job.progress || i.job.name}` : 'Агент работает') : 'Прочитан — нажмите, чтобы вернуть «не прочитано»';
     return `<div draggable="true" class="chat ${i.status} ${i.archived ? 'arch' : ''} ${i.key === sticky ? 'current' : ''}" data-k="${esc(i.key)}" title="${esc(i.title)}">
       <span class="dot" data-dot="1" title="${tip}"></span>
       ${badge(i.agent, 'Чат ' + agName(i.agent))}
       <span class="t">${resultQ && snippet !== undefined ? mark(i.title, resultQ) : esc(i.title)}${i.waiting ? '<span class="q" title="Агент задал вопрос и ждёт ответа">?</span>' : ''}</span>
       <button class="ib cstar ${favChats[i.key] ? 'on' : ''}" data-cstar="1" title="${favChats[i.key] ? 'Убрать чат из избранного' : 'Чат в избранное'}">${ICON.star}</button>
       ${weight(i)}
+      ${i.job && i.job.pct != null ? `<span class="jp" title="${esc(i.job.name)}: ${esc(i.job.progress)}${i.job.batch ? ', идёт партия ' + i.job.batch : ''}">${i.job.pct}%</span>` : ''}
       <span class="time" data-ts="${i.ts}">${ago(i.ts)}</span>
       <span class="acts">
         ${i.bot ? `<button class="ib cont" data-cont="1" title="Продолжить на Mac: новый чат Claude со ссылкой на этот разговор с ботом. Сам разговор бота не меняется.">${ICON.cont}</button>` : ''}
@@ -268,6 +271,9 @@
     if (st.filter === 'unread') v = v.filter((i) => i.status === 'unread' || keep(i));
     if (st.filter === 'active') v = v.filter((i) => isActive(i) || keep(i));
     if (st.filter === 'waiting') v = v.filter((i) => i.waiting || keep(i));
+    // Партии одной фоновой задачи — отдельные запуски, каждые несколько минут новый. В списке — только последняя;
+    // все партии видны в «агент» → «Все фоновые чаты» и в архиве (0.9.10)
+    if (st.filter !== 'bg' && st.filter !== 'archive') { const seenJob = new Set(); v = v.filter((i) => !i.jobFolder || (!seenJob.has(i.jobFolder) && seenJob.add(i.jobFolder))); }
     if (st.filter === 'recent') v = v.slice(0, 40);
     if (st.filter === 'bg') v = v.filter((i) => i.background && !i.bot);
     if (st.filter === 'tg') v = v.filter((i) => i.bot);
@@ -493,7 +499,7 @@
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (m.type === 'data') {
-      items = m.items; jobs = m.jobs || []; favorites = m.favorites || {}; favChats = m.favChats || {}; collapsed = m.collapsed || {}; order = m.order || []; icons = m.icons || {}; customGroups = m.customGroups || []; lastAgent = m.lastAgent || 'claude';
+      items = m.items; jobs = m.jobs || []; jobPct = m.jobPct || []; favorites = m.favorites || {}; favChats = m.favChats || {}; collapsed = m.collapsed || {}; order = m.order || []; icons = m.icons || {}; customGroups = m.customGroups || []; lastAgent = m.lastAgent || 'claude';
       if (m.installed) installed = m.installed;
       // Если в выключенном фильтре остался единственный включённый агент — показать того, что есть.
       if (!installed.claude && !items.some((i) => i.agent === 'claude')) st.agents.codex = true;

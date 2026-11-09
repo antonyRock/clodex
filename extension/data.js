@@ -91,7 +91,8 @@ function parseClaude(content, id, file) {
         toolOnly = c.length > 0 && c.every((b) => b.type === 'tool_result');
         text = c.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
       }
-      if (toolOnly) { chat.finished = false; if (t) chat.lastTs = Math.max(chat.lastTs, t); continue; }
+      // результат шага «сдать итог» (StructuredOutput) — партия закончена
+      if (toolOnly) { chat.finished = !!chat.soDone; if (t) chat.lastTs = Math.max(chat.lastTs, t); continue; }
       text = cleanClaudeUser(text);
       if (!text) continue;
       if (text.startsWith('[Request interrupted')) { chat.finished = true; continue; }
@@ -114,7 +115,8 @@ function parseClaude(content, id, file) {
         const f = b.type === 'tool_use' && /^(Edit|Write|MultiEdit|NotebookEdit)$/.test(b.name) && b.input && (b.input.file_path || b.input.notebook_path);
         if (f) noteEdit(chat, f, t);
       }
-      chat.finished = stop === 'end_turn' || stop === 'stop_sequence' || (text && !blocks.some((b) => b.type === 'tool_use') && stop !== 'tool_use');
+      chat.finished = stop === 'end_turn' || stop === 'stop_sequence' || (text && !blocks.some((b) => b.type === 'tool_use') && stop !== 'tool_use')
+        || (chat.soDone = blocks.some((b) => b.type === 'tool_use' && b.name === 'StructuredOutput')); // фоновая партия сдаёт итог этим шагом — дальше ответа не будет (0.9.8)
     }
   }
   chat.title = chat.customTitle || chat.aiTitle || chat.firstUser.split('\n')[0].slice(0, 80) || 'Без названия';
@@ -122,8 +124,13 @@ function parseClaude(content, id, file) {
     const m = chat.firstUser.match(/заданию `([^`]+)\/00_[^`/]*`/);
     if (m && !chat.customTitle) chat.title = m[1].split('/').pop() + ' — партия';
   }
-  // Telegram-бот: `claude -p` на сервере в корне Claude_AI; ночные задачи начинаются с «Ты фоновый агент»
-  if (chat.background && /Claude_AI\/?$/.test(chat.cwd) && chat.platform !== 'darwin' && !/^Ты фоновый агент/.test(firstRaw)) {
+  // Партия фоновой задачи сервера («…партию №0031…»): своё название и связь с контрольной точкой (0.9.7)
+  if (chat.background && isJobText(firstRaw)) {
+    chat.job = true; chat.jobDirs = jobDirsOf(firstRaw);
+    if (!chat.customTitle && !chat.aiTitle) chat.title = codexJobTitle(firstRaw) || chat.title;
+  }
+  // Telegram-бот: `claude -p` на сервере в корне Claude_AI; ночные задачи начинаются с «Ты фоновый агент», партии — с «…партию №»
+  if (chat.background && !chat.job && /Claude_AI\/?$/.test(chat.cwd) && chat.platform !== 'darwin' && !/^Ты фоновый агент/.test(firstRaw)) {
     chat.bot = true;
     if (!chat.customTitle && !chat.aiTitle) chat.title = botTitle(firstRaw);
     chat.lastUserText = botPlain(lastRaw).slice(0, 600);
@@ -167,7 +174,7 @@ function parseCodex(content, file) {
         if (!chat.firstUser) {
           chat.firstUser = text.slice(0, 200);
           if (chat.background && text.startsWith(BOT_CODEX)) { chat.bot = true; chat.bgTitle = botTitle(text); }
-          else if (chat.background) chat.bgTitle = codexJobTitle(text);
+          else if (chat.background) { chat.bgTitle = codexJobTitle(text); if (isJobText(text)) { chat.job = true; chat.jobDirs = jobDirsOf(text); } }
         }
         chat.lastUserTs = t; chat.lastTs = Math.max(chat.lastTs, t); chat.lastUserText = (chat.bot ? botPlain(text) : text).slice(0, 600);
         addText(chat, 'user', text);
@@ -273,6 +280,15 @@ function botConversation(content, agent) {
     }
   }
   return out.filter((m) => m.who !== 'me' || m.text || m.files.length || m.notes.length);
+}
+
+// Задание партии фоновой задачи: «Выполни … партию №0031»
+const isJobText = (t) => /парти[юяи]\s*№\s*\d+/i.test((t || '').slice(0, 3000));
+// Папки, упомянутые в задании («…/04_Полный разбор ChatGPT/…») — по ним чат партии находит свою контрольную точку
+function jobDirsOf(t) {
+  const out = new Set();
+  for (const m of (t || '').slice(0, 8000).normalize('NFC').matchAll(/(\d\d_[^\/`\n«»"]+?)(?=\/|`|$)/gm)) { out.add(m[1].trim()); if (out.size >= 40) break; }
+  return [...out];
 }
 
 // «…партию №0012…\n# Полный смысловой разбор ChatGPT — поручение…» → «Полный смысловой разбор ChatGPT — партия 0012»
@@ -563,11 +579,12 @@ function listJobs(root) {
       const status = String(d.status || '');
       const fresh = Date.now() - st.mtimeMs < JOB_FRESH_MS;
       const running = /^(running|в работе)$/i.test(status) && fresh;
-      const name = path.basename(dir).replace(/^\d+_/, '');
+      const name = path.basename(dir).normalize('NFC').replace(/^\d+_/, ''); // macOS отдаёт имена папок в NFD («й» = «и» + знак) — приводим к обычной записи
       const total = d.queue_total || 0, done = d.segments_done || 0;
       const progress = total && done ? `${done.toLocaleString('ru-RU')} из ${total.toLocaleString('ru-RU')} (${Math.floor(done * 100 / total)}%)` : (d.batches_done ? `партий: ${d.batches_done}` : '');
       const logs = ['03_Ход разбора.md'].map((n) => path.join(dir, n)).filter((x) => fs.existsSync(x));
-      out.push({ name, dir, file: f, status, running, mtime: st.mtimeMs, progress, batch: d.pending_batch || null, log: logs[0] || f });
+      const pct = total && done ? Math.floor(done * 100 / total) : null;
+      out.push({ name, folder: path.basename(dir).normalize('NFC'), dir, file: f, status, running, mtime: st.mtimeMs, progress, pct, done, total, batch: d.pending_batch || null, log: logs[0] || f });
     }
   };
   walk(root, 0);

@@ -2,7 +2,7 @@
   "name": "clodex",
   "displayName": "Clodex",
   "description": "Чаты Claude Code и Codex в одном списке: поиск по тексту, непрочитанные, фильтры.",
-  "version": "0.9.6",
+  "version": "0.9.10",
   "publisher": "clodex",
   "private": true,
   "engines": {

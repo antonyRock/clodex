@@ -24,7 +24,7 @@
 1. Скачайте `clodex-<версия>.vsix` со страницы [Releases](https://github.com/antonyRock/clodex/releases/latest).
 2. Установите:
    ```
-   code --install-extension ~/Downloads/clodex-0.7.9.vsix
+   code --install-extension ~/Downloads/clodex-0.9.10.vsix
    ```
    Или в VS Code: Extensions → «⋯» → Install from VSIX…
 3. Перезагрузите окно: Cmd+Shift+P → «Developer: Reload Window». Слева появится иконка Clodex.
