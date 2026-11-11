@@ -2,7 +2,7 @@
   "name": "clodex",
   "displayName": "Clodex",
   "description": "Чаты Claude Code и Codex в одном списке: поиск по тексту, непрочитанные, фильтры.",
-  "version": "0.9.10",
+  "version": "0.9.42",
   "publisher": "clodex",
   "private": true,
   "engines": {
@@ -31,17 +31,17 @@
           "type": "webview",
           "id": "clodex.chats",
           "name": "Чаты"
-        },
-        {
-          "type": "webview",
-          "id": "clodex.screens",
-          "name": "Скриншоты"
         }
       ]
     },
     "configuration": {
       "title": "Clodex",
       "properties": {
+        "clodex.photosHours": {
+          "type": "number",
+          "default": 24,
+          "description": "Показывать в «Скриншотах» фото из библиотеки «Фото» (iCloud Фото с айфона), появившиеся за последние N часов. 0 — не показывать."
+        },
         "clodex.registryPath": {
           "type": "string",
           "default": "",

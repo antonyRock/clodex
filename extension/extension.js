@@ -47,7 +47,7 @@ async function activate(context) {
   log.info('Clodex ' + (context.extension && context.extension.packageJSON.version) + ' запускается');
   try { await migrate(context); } catch (e) { console.error('Clodex: migrate', e); }
   const provider = new ClodexView(context);
-  try { require('./screens').registerScreens(context, log); } catch (e) { log.error('скриншоты: ' + (e && e.stack || e)); }
+  try { provider.screens = require('./screens').registerScreens(context, log); } catch (e) { log.error('скриншоты: ' + (e && e.stack || e)); }
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('clodex.chats', provider, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.commands.registerCommand('clodex.refresh', () => provider.refresh(true)),
@@ -70,13 +70,21 @@ async function activate(context) {
   log.info('Clodex запущен');
 }
 
+// Claude Code обрезает подпись вкладки до 24 знаков и ставит «…» — сравниваем по началу названия.
+function tabMatches(label, title) {
+  if (!label || !title) return false;
+  if (label === title) return true;
+  const l = label.replace(/\s*(…|\.\.\.)$/, '');
+  return l !== label && l.length > 0 && title.startsWith(l);
+}
+
 class ClodexView {
   constructor(context) {
     this.ctx = context;
     this.view = null;
     this.chats = [];
     this.byKey = new Map();
-    this.cacheFile = path.join(context.globalStorageUri.fsPath, 'cache-v11.json');
+    this.cacheFile = path.join(context.globalStorageUri.fsPath, 'cache-v13.json');
     this.scanner = new Scanner(this.loadCache());
     this.scanning = false;
     this.lastQuery = '';
@@ -172,7 +180,7 @@ class ClodexView {
     const g = vscode.window.tabGroups.activeTabGroup;
     const t = g && g.activeTab;
     if (!t || !(t.input instanceof vscode.TabInputWebview) || !t.input.viewType.includes('claudeVSCodePanel')) return;
-    const c = (this.chats || []).filter((x) => x.agent === 'claude' && x.title === t.label)
+    const c = (this.chats || []).filter((x) => x.agent === 'claude' && tabMatches(t.label, x.title))
       .sort((a, b) => (b.mtime || 0) - (a.mtime || 0))[0];
     // Новый чат: у вкладки ещё нет названия или история не дочитана — снимаем старую подсветку,
     // следующий опрос (раз в 4 с) найдёт чат по названию и подсветит его.
@@ -200,7 +208,7 @@ class ClodexView {
     const manual = this.manualUnread;
     let upd = false;
     for (const c of this.chats) {
-      if (c.agent === 'claude' && labels.has(c.title) && !(c.key in manual) && this.isUnread(c, seen)) { seen[c.key] = Date.now(); upd = true; }
+      if (c.agent === 'claude' && [...labels].some((l) => tabMatches(l, c.title)) && !(c.key in manual) && this.isUnread(c, seen)) { seen[c.key] = Date.now(); upd = true; }
     }
     if (upd) this.ctx.globalState.update('seen', seen).then(() => this.push());
   }
@@ -427,6 +435,7 @@ class ClodexView {
     if (c.bot) return this.openBot(c);
     if (c.background) return this.openTranscript(c);
     if (!this.installed()[c.agent]) return this.notInstalled(c.agent);
+    globalThis.__clodexLastAgent = c.agent;
     try {
       if (c.agent === 'claude') {
         if (!this.inThisWorkspace(c)) return this.openElsewhere(c);
@@ -848,13 +857,15 @@ class ClodexView {
   resolveWebviewView(view) {
     this.view = view;
     const media = vscode.Uri.joinPath(this.ctx.extensionUri, 'media');
-    view.webview.options = { enableScripts: true, localResourceRoots: [media] };
+    const scr = this.screens;
+    view.webview.options = { enableScripts: true, localResourceRoots: [media, ...(scr ? scr.roots() : [])] };
     const css = view.webview.asWebviewUri(vscode.Uri.joinPath(media, 'view.css'));
     const js = view.webview.asWebviewUri(vscode.Uri.joinPath(media, 'view.js'));
     const nonce = Math.random().toString(36).slice(2);
+    const sh = scr ? scr.html(view.webview, media) : null;
     view.webview.html = `<!doctype html><html lang="ru" data-zoom="${this.getZoom()}"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';">
-<link rel="stylesheet" href="${css}"></head><body>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${view.webview.cspSource}; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';">
+<link rel="stylesheet" href="${css}">${sh ? sh.css : ''}</head><body>
 <div id="grid"></div>
 <div id="top">
   <div class="brand"><span class="word">Clodex</span><span class="sq"></span><button id="sum" class="sum"></button><button id="agentBadge" class="agentb" hidden></button><button id="botBadge" class="agentb" hidden></button>
@@ -866,8 +877,11 @@ class ClodexView {
   <div id="sizeMenu" class="pop size" hidden></div>
 </div>
 <div id="list"></div>
-<script nonce="${nonce}" src="${js}"></script></body></html>`;
+${sh ? sh.body : ''}
+<script nonce="${nonce}" src="${js}"></script>${sh ? `<script nonce="${nonce}" src="${sh.js}"></script>` : ''}<script nonce="${nonce}" src="${view.webview.asWebviewUri(vscode.Uri.joinPath(media, 'drop.js'))}"></script></body></html>`;
+    if (scr) scr.attach(view);
     view.webview.onDidReceiveMessage(async (m) => {
+      if (m.type === 'scr') { if (scr) scr.handle(m.m || {}); return; }
       if (m.type === 'ready') { log.info('панель открыта'); this.postTheme(); this.postSizes(); this.push(); }
       if (m.type === 'zoom') this.setZoom(m.value);
       if (m.type === 'chatFont') this.setChatFont(m.value);

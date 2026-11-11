@@ -1,6 +1,7 @@
 // Страница панели Clodex.
 (function () {
   const vscode = acquireVsCodeApi();
+  window.clodexApi = vscode; // общий для плашки «Скриншоты» (media/screens.js): второй acquireVsCodeApi нельзя
   // любая ошибка панели — в журнал Clodex и текстом на экран, а не пустая панель
   function reportError(msg) {
     try { vscode.postMessage({ type: 'clientError', message: String(msg) }); } catch {}
@@ -44,7 +45,7 @@
   const FILTER_TIP = {
     active: 'Агент работает, ответил, а вы не прочитали, или в чате что-то было за последние 2 часа',
     all: 'Все чаты, свежие сверху', unread: 'Агент ответил, а вы не открывали',
-    waiting: 'Последний ответ агента кончается вопросом, а вы после него не писали', archive: 'Чаты, убранные в архив', fav: 'Избранные чаты и группы (звёздочка у чата или у группы). Повторное нажатие — только избранные чаты списком / с группами',
+    waiting: 'Последний ответ агента кончается вопросом, а вы после него не писали', archive: 'Чаты, убранные в архив', fav: 'По группам — избранные группы, списком — избранные чаты (звёздочка у группы или у чата). Число — сколько их в текущем виде',
   };
   // Вид каждого фильтра: по группам или списком; повторное нажатие на выбранный фильтр переключает.
   const GROUPED_DEFAULT = { all: true, fav: true, active: true, recent: false, unread: false, waiting: false, archive: false, bg: false };
@@ -52,6 +53,7 @@
   const isGrouped = (f) => (f in st.grouped ? st.grouped[f] : GROUPED_DEFAULT[f]);
   const VIEW_ICON = {
     groups: '<svg class="vi" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="4.5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="2" y="9" width="12" height="4.5" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
+    hot: '<svg class="vi" viewBox="0 0 16 16"><path d="M9 1.5 3.5 9H7.7L7 14.5 12.5 7H8.3z" fill="currentColor"/></svg>',
     list: '<svg class="vi" viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   };
   // Активные: агент работает, не прочитан или в чате что-то было за последние 2 часа; фоновые — только пока работают
@@ -150,12 +152,13 @@
       waiting: v.filter((i) => i.waiting).length,
       archive: items.filter((i) => i.archived && byAgent(i)).length,
       active: v.filter(isActive).length,
-      fav: v.filter((i) => favChats[i.key] || favorites[i.group]).length,
+      // Избранное: по группам — число избранных групп, списком — число избранных чатов (0.9.14)
+      fav: isGrouped('fav') ? new Set(v.filter((i) => favorites[i.group]).map((i) => i.group)).size : v.filter((i) => favChats[i.key]).length,
     };
     // Плитки одного размера: значок, подпись, число в углу; у выбранной — значок «группы / список» в другом углу
     const tileIcon = (k) => k === 'active' ? BOLT : k === 'fav' ? `<span class="fstar">${ICON.star}</span>` : TILE_ICON[k] || '';
     $('filters').innerHTML =
-      FILTERS.map(([k, n]) => `<button class="tile t-${k} ${st.filter === k ? 'on' : ''} ${(k === 'unread' || k === 'active') && cnt[k] ? 'hot' : ''}" data-f="${k}" title="${(FILTER_TIP[k] || 'Все чаты') + (st.filter === k ? '. Нажмите ещё раз — ' + (isGrouped(k) ? 'списком' : 'по группам') : '')}"><span class="ti">${tileIcon(k)}</span><span class="tl">${n}</span>${cnt[k] ? `<b>${cnt[k]}</b>` : ''}${st.filter === k ? `<span class="mode">${isGrouped(k) ? VIEW_ICON.groups : VIEW_ICON.list}</span>` : ''}</button>`).join('')
+      FILTERS.map(([k, n]) => `<button class="tile t-${k} ${st.filter === k ? 'on' : ''} ${(k === 'unread' || k === 'active') && cnt[k] ? 'hot' : ''}" data-f="${k}" title="${(FILTER_TIP[k] || 'Все чаты') + (st.filter === k ? '. Нажмите ещё раз — ' + (k === 'all' ? (st.hot ? 'все чаты по группам' : isGrouped(k) ? 'списком' : 'по группам, только непрочитанные и свежее 2 часов') : isGrouped(k) ? 'списком' : 'по группам') : '')}"><span class="ti">${tileIcon(k)}</span><span class="tl">${n}</span>${cnt[k] ? `<b>${cnt[k]}</b>` : ''}${st.filter === k ? `<span class="mode">${k === 'all' && st.hot ? VIEW_ICON.hot : isGrouped(k) ? VIEW_ICON.groups : VIEW_ICON.list}</span>` : ''}</button>`).join('')
       + (st.filter === 'archive' ? `<div class="archbar"><span class="ai">${TILE_ICON.disk}</span>Архив <b>${cnt.archive}</b><button class="ib" data-f="archive" title="${isGrouped('archive') ? 'Показать списком' : 'Разложить по группам'}">${isGrouped('archive') ? VIEW_ICON.groups : VIEW_ICON.list}</button><button class="ib x" data-archclose="1" title="Закрыть архив">✕</button></div>` : '');
     lastCnt = cnt;
     $('sum').innerHTML = cnt.unread ? `<span class="pulse"></span>${cnt.unread} новых` : 'всё прочитано';
@@ -211,7 +214,7 @@
     const tip = i.status === 'unread' ? 'Не прочитан — нажмите, чтобы отметить прочитанным' : i.status === 'working' ? (i.job ? `Идёт фоновая задача: ${i.job.progress || i.job.name}` : 'Агент работает') : 'Прочитан — нажмите, чтобы вернуть «не прочитано»';
     return `<div draggable="true" class="chat ${i.status} ${i.archived ? 'arch' : ''} ${i.key === sticky ? 'current' : ''}" data-k="${esc(i.key)}" title="${esc(i.title)}">
       <span class="dot" data-dot="1" title="${tip}"></span>
-      ${badge(i.agent, 'Чат ' + agName(i.agent))}
+      ${i.bot ? `<span class="ag logo tg" title="Разговор с Telegram-ботом">${TG_ICON}</span>` : badge(i.agent, 'Чат ' + agName(i.agent))}
       <span class="t">${resultQ && snippet !== undefined ? mark(i.title, resultQ) : esc(i.title)}${i.waiting ? '<span class="q" title="Агент задал вопрос и ждёт ответа">?</span>' : ''}</span>
       <button class="ib cstar ${favChats[i.key] ? 'on' : ''}" data-cstar="1" title="${favChats[i.key] ? 'Убрать чат из избранного' : 'Чат в избранное'}">${ICON.star}</button>
       ${weight(i)}
@@ -232,6 +235,13 @@
   function groupOrder(groups) {
     const names = [...groups.keys()];
     const t = (g) => (groups.get(g)[0] ? groups.get(g)[0].ts : 0);
+    // «Недавние» по группам (0.9.29): ручной порядок не нужен — сверху группа, где последнее сообщение свежее всех
+    // (там сейчас идёт переписка); внутри группы чаты и так по свежести. «Без группы» первая.
+    if (st.filter === 'all') {
+      const rest = names.filter((g) => g !== NO_GROUP).sort((a, b) => t(b) - t(a));
+      if (groups.has(NO_GROUP)) rest.unshift(NO_GROUP);
+      return rest;
+    }
     const rest = names.filter((g) => !order.includes(g) && g !== NO_GROUP).sort((a, b) => t(b) - t(a));
     const out = [...order.filter((g) => groups.has(g) && g !== NO_GROUP), ...rest];
     if (groups.has(NO_GROUP)) out.unshift(NO_GROUP); // «Без группы» всегда первая — чаты, которые ещё не разложены
@@ -266,8 +276,9 @@
       return;
     }
     let v = (st.filter === 'archive' ? items.filter((i) => i.archived && byAgent(i)) : live()).sort((a, b) => b.ts - a.ts);
-    // Избранное: по группам — избранные группы целиком и отмеченные чаты; списком — только отмеченные чаты
-    if (st.filter === 'fav') v = v.filter((i) => favChats[i.key] || (isGrouped('fav') && favorites[i.group]));
+    // Избранное: по группам — только избранные группы; списком — только избранные чаты, без групп (0.9.14)
+    if (st.filter === 'fav') v = v.filter((i) => isGrouped('fav') ? favorites[i.group] : favChats[i.key]);
+    if (st.filter === 'all' && st.hot) v = v.filter((i) => isActive(i) || keep(i)); // третье нажатие «Недавние»: непрочитанные и свежее 2 часов, по группам
     if (st.filter === 'unread') v = v.filter((i) => i.status === 'unread' || keep(i));
     if (st.filter === 'active') v = v.filter((i) => isActive(i) || keep(i));
     if (st.filter === 'waiting') v = v.filter((i) => i.waiting || keep(i));
@@ -278,7 +289,7 @@
     if (st.filter === 'bg') v = v.filter((i) => i.background && !i.bot);
     if (st.filter === 'tg') v = v.filter((i) => i.bot);
     if (!v.length) {
-      const msg = { unread: 'Всё прочитано', waiting: 'Никто не ждёт ответа', archive: 'Архив пуст', tg: 'Разговоров с ботом нет', fav: isGrouped('fav') ? 'Избранного пока нет — наведите на чат или группу и нажмите звёздочку' : 'Избранных чатов нет — наведите на чат и нажмите звёздочку', active: 'Активных нет: никто не работает, не ждёт и не ответил' }[st.filter] || 'Чатов нет';
+      const msg = { unread: 'Всё прочитано', all: st.hot ? 'Нет непрочитанных и свежее 2 часов — нажмите «Недавние» ещё раз' : '', waiting: 'Никто не ждёт ответа', archive: 'Архив пуст', tg: 'Разговоров с ботом нет', fav: isGrouped('fav') ? 'Избранных групп нет — наведите на группу и нажмите звёздочку' : 'Избранных чатов нет — наведите на чат и нажмите звёздочку', active: 'Активных нет: никто не работает, не ждёт и не ответил' }[st.filter] || 'Чатов нет';
       list.innerHTML = `<div class="empty">${msg}</div>`;
       return;
     }
@@ -295,7 +306,7 @@
       const work = arr.some((i) => i.status === 'working');
       const c = !!collapsed[g];
       return `<div class="card group ${c ? 'collapsed' : ''} ${un ? 'has-unread' : ''}" data-g="${esc(g)}">
-        <div class="gh" draggable="true" data-g="${esc(g)}" title="Нажмите — свернуть/раскрыть. Перетащите — поменять порядок.">
+        <div class="gh" ${st.filter === 'all' ? '' : 'draggable="true"'} data-g="${esc(g)}" title="${st.filter === 'all' ? 'Нажмите — свернуть/раскрыть. Порядок групп — по последней активности.' : 'Нажмите — свернуть/раскрыть. Перетащите — поменять порядок.'}">
           <span class="grip">${ICON.grip}</span>
           <span class="chev">${ICON.chev}</span>
           <span class="gn">${esc(g)}</span>
@@ -325,7 +336,11 @@
     if (e.target.closest('[data-sreset]')) { vscode.postMessage({ type: 'zoom', value: 1 }); vscode.postMessage({ type: 'chatFont', value: null }); return; }
     const f = e.target.closest('[data-f]');
     if (f) {
-      if (f.dataset.f === st.filter) st.grouped[st.filter] = !isGrouped(st.filter); // повторное нажатие — группы / список
+      if (f.dataset.f === st.filter) {
+        // «Недавние»: по группам → списком → по группам только непрочитанные и свежее 2 часов (0.9.30) → снова по группам
+        if (st.filter === 'all') { if (!isGrouped('all')) { st.grouped.all = true; st.hot = true; } else if (st.hot) st.hot = false; else st.grouped.all = false; }
+        else st.grouped[st.filter] = !isGrouped(st.filter); // повторное нажатие — группы / список
+      } else st.hot = false;
       st.filter = f.dataset.f;
       if (results) { q.value = ''; onSearch(); }
       save(); render(); return;

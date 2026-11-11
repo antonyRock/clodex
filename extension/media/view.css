@@ -402,3 +402,17 @@ body.light .tile.on .bolt { color: #F08300; }
 
 button.agentb .bico { font-size: 12px; line-height: 1; flex: none; }
 button.agentb svg.bico { display: block; }
+
+/* Бросить файл из Finder на панель → путь в чат Claude (media/drop.js) */
+#dropov {
+  position: fixed; inset: 6px; z-index: 100; pointer-events: none;
+  display: grid; place-items: center; opacity: 0; transition: opacity .12s ease;
+  border-radius: 16px; border: 1.5px dashed var(--a3);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+#dropov.on { opacity: 1; }
+#dropov .dz { display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--ink); text-align: center; padding: 16px; }
+#dropov svg { width: 34px; height: 34px; color: var(--a3); }
+#dropov b { font-size: 14px; font-weight: 600; }
+#dropov span { color: var(--muted); font-size: 12px; }

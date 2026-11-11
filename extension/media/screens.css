@@ -1,130 +1,215 @@
-/* Скриншоты — в стиле Clodex (Пульт Clodex v6): стекло, фиолетово-голубой акцент, жёлтый квадрат «новый». */
-:root {
-  --bg: var(--vscode-sideBar-background, #0E0E13); --ink: #ECECF1; --muted: rgba(236,236,241,.55);
-  --a1: #8B7CFF; --a2: #0A84FF; --a3: #3FD8F2; --yellow: #FFDD2D;
-  --gl-top: rgba(40,40,54,.55); --gl-bot: rgba(18,18,26,.45);
-  --gl-edge: rgba(255,255,255,.08); --gl-hi: rgba(255,255,255,.10);
-  --gl-shadow: 0 2px 6px rgba(0,0,0,.22), 0 12px 32px rgba(0,0,0,.28);
-  --hover: rgba(255,255,255,.06);
-  --btn: rgba(14,14,19,.72); --btn-ink: #ECECF1;
-  --primary: linear-gradient(135deg, #8B7CFF, #0A84FF 60%, #3FD8F2);
-  color-scheme: dark;
+/* Плашка «Скриншоты» внизу панели Clodex — стекло в стиле Пульта Clodex v6.
+   Закрыта — одна строка-плашка; нажатие — снизу выдвигается сетка снимков. Все правила — внутри #shots. */
+#shots {
+  --s-btn: rgba(14,14,19,.72); --s-btn-ink: #ECECF1;
+  --s-primary: linear-gradient(135deg, #8B7CFF, #0A84FF 60%, #3FD8F2);
+  --s-sheet: linear-gradient(180deg, rgba(34,34,48,.86), rgba(16,16,24,.92));
+  --s-edge: rgba(255,255,255,.10);
+  position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 30;
+  display: flex; flex-direction: column;
+  border-radius: 16px; border: 1px solid var(--s-edge);
+  background: var(--s-sheet);
+  box-shadow: 0 2px 6px rgba(0,0,0,.25), 0 14px 40px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,.08);
+  backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  outline: none; transition: box-shadow .2s ease;
 }
-body.vscode-light, body.vscode-high-contrast-light {
-  --ink: #1D1D1F; --muted: #86868B;
-  --a1: #262626; --a2: #262626; --a3: #262626;
-  --gl-top: #FFFFFF; --gl-bot: #FFFFFF; --gl-edge: rgba(0,0,0,.07); --gl-hi: rgba(255,255,255,0);
-  --gl-shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(20,20,30,.06);
-  --hover: rgba(0,0,0,.04);
-  --btn: rgba(255,255,255,.88); --btn-ink: #1D1D1F;
-  --primary: #262626;
-  color-scheme: light;
+body.light #shots {
+  --s-btn: rgba(255,255,255,.9); --s-btn-ink: #1D1D1F; --s-primary: #262626;
+  --s-sheet: rgba(255,255,255,.9); --s-edge: rgba(0,0,0,.08);
+  box-shadow: 0 1px 2px rgba(0,0,0,.05), 0 8px 28px rgba(20,20,30,.12);
 }
+/* последние чаты не прячутся под плашкой */
+#list { padding-bottom: 72px; }
 
-* { box-sizing: border-box; }
-body {
-  margin: 0; padding: 0 10px 14px; color: var(--ink); background: var(--bg);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", var(--vscode-font-family), system-ui, sans-serif;
-  font-size: 12px; -webkit-font-smoothing: antialiased; overflow-x: hidden;
+/* --- сама плашка --- */
+#s-head {
+  display: flex; align-items: center; gap: 8px; height: 42px; padding: 0 8px 0 7px;
+  cursor: pointer; user-select: none; border-radius: 15px; outline: none;
 }
-#glow {
-  position: fixed; inset: 0; pointer-events: none; z-index: 0;
-  background: radial-gradient(120% 40% at 15% -10%, rgba(139,124,255,.14), transparent 60%),
-              radial-gradient(90% 35% at 110% 0%, rgba(63,216,242,.09), transparent 60%);
+#s-head:hover { background: rgba(255,255,255,.035); }
+body.light #s-head:hover { background: rgba(0,0,0,.025); }
+#s-head:focus-visible { box-shadow: 0 0 0 2px rgba(139,124,255,.55); }
+.s-ico {
+  width: 28px; height: 28px; border-radius: 9px; flex: none; display: grid; place-items: center; color: #fff;
+  background: linear-gradient(135deg, #8B7CFF, #0A84FF 60%, #3FD8F2);
+  box-shadow: 0 2px 8px rgba(10,132,255,.35), inset 0 1px 0 rgba(255,255,255,.25);
 }
-body.vscode-light #glow { background: radial-gradient(120% 40% at 15% -12%, rgba(255,221,45,.16), transparent 60%); }
+body.light .s-ico { background: #262626; box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+.s-ico svg { width: 16px; height: 16px; }
+.s-title { font-weight: 650; font-size: 13px; letter-spacing: -.01em; color: var(--ink); }
+.s-count { display: flex; align-items: center; gap: 5px; margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+.s-count .tot { min-width: 22px; height: 22px; padding: 0 7px; box-sizing: border-box; display: inline-grid; place-items: center; border-radius: 11px; background: rgba(127,127,127,.16); color: var(--ink); font-weight: 600; font-size: 12px; }
+.s-count .new { color: #0E0E13; background: var(--yellow); border-radius: 11px; height: 22px; padding: 0 8px; display: inline-grid; place-items: center; font-weight: 700; font-size: 11px; }
+#shots.fresh:not(.open) .s-count .new { animation: s-pulse 2.4s ease-in-out infinite; }
+@keyframes s-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255,221,45,.55); } 50% { box-shadow: 0 0 0 5px rgba(255,221,45,0); } }
 
-#top {
-  position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 6px;
-  padding: 10px 0 8px; background: linear-gradient(to bottom, var(--bg) 70%, transparent);
-}
-.title { font-weight: 650; font-size: 13px; letter-spacing: -.01em; }
-.count { color: var(--muted); font-variant-numeric: tabular-nums; }
-.count .new { color: #0E0E13; background: var(--yellow); border-radius: 4px; padding: 0 5px; margin-left: 4px; font-weight: 650; }
-.tools { margin-left: auto; display: flex; gap: 2px; }
-.ib {
-  width: 24px; height: 24px; border: 0; border-radius: 7px; background: transparent; color: var(--muted);
+.s-tools { display: none; gap: 2px; margin-left: auto; }
+#shots.open .s-tools { display: flex; animation: s-dropin .18s ease; }
+#shots.open .s-count { margin-left: 4px; }
+.s-ib {
+  width: 26px; height: 26px; border: 0; border-radius: 8px; background: transparent; color: var(--muted);
   display: grid; place-items: center; cursor: pointer; padding: 0;
 }
-.ib:hover { background: var(--hover); color: var(--ink); }
-.ib svg { width: 15px; height: 15px; }
-
-#grid {
-  position: relative; z-index: 1;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px;
+.s-ib:hover { background: var(--hover); color: var(--ink); }
+.s-ib svg { width: 15px; height: 15px; }
+.s-chev {
+  width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; color: var(--muted); flex: none;
+  transition: transform .25s cubic-bezier(.2,.8,.2,1), color .15s ease;
 }
-.day { grid-column: 1 / -1; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; margin: 6px 2px -2px; }
+#s-head:hover .s-chev { color: var(--ink); }
+#shots.open .s-chev { transform: rotate(180deg); }
+.s-chev svg { width: 15px; height: 15px; }
 
-.card {
+/* --- выдвижная часть --- */
+#s-body {
+  max-height: 0; overflow: hidden; padding: 0 10px; opacity: 0;
+  transition: max-height .3s cubic-bezier(.2,.8,.2,1), opacity .2s ease, padding .3s ease;
+}
+#shots.open #s-body {
+  max-height: min(58vh, 520px); overflow-y: auto; opacity: 1; padding: 2px 10px 10px;
+  border-top: 1px solid var(--s-edge);
+}
+#s-body::-webkit-scrollbar { width: 6px; }
+#s-body::-webkit-scrollbar-thumb { background: rgba(127,127,127,.3); border-radius: 3px; }
+
+/* одна строка миниатюр: колесо мыши / ползунок листают вправо-влево (0.9.41) */
+#s-grid { display: flex; flex-wrap: nowrap; align-items: stretch; gap: 10px; padding: 6px 0 8px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+#s-grid::-webkit-scrollbar { height: 8px; }
+#s-grid::-webkit-scrollbar-thumb { background: rgba(127,127,127,.35); border-radius: 4px; }
+#s-grid .s-card { flex: none; width: 96px; align-self: flex-start; }
+.s-day { flex: none; align-self: center; writing-mode: vertical-rl; transform: rotate(180deg); color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; margin: 0 -4px; white-space: nowrap; }
+
+.s-card {
   position: relative; border-radius: 14px; overflow: hidden; cursor: grab;
   background: linear-gradient(180deg, var(--gl-top), var(--gl-bot));
   border: 1px solid var(--gl-edge); box-shadow: var(--gl-shadow), inset 0 1px 0 var(--gl-hi);
   transition: transform .15s ease, box-shadow .15s ease;
 }
-.card:hover { transform: translateY(-1px); box-shadow: var(--gl-shadow), 0 0 0 1px rgba(139,124,255,.45); }
-.card img {
+.s-card:hover { transform: translateY(-1px); box-shadow: var(--gl-shadow), 0 0 0 1px rgba(139,124,255,.45); }
+.s-card img {
   display: block; width: 100%; aspect-ratio: 9 / 16; object-fit: cover; object-position: top;
   background: rgba(127,127,127,.12); pointer-events: none;
 }
-.meta {
+.s-meta {
   position: absolute; left: 0; right: 0; bottom: 0; padding: 18px 8px 7px;
   background: linear-gradient(to top, rgba(0,0,0,.62), transparent);
   color: #fff; font-size: 11px; display: flex; align-items: center; gap: 5px;
 }
-.meta .sq { width: 7px; height: 7px; border-radius: 2px; background: var(--yellow); flex: none; }
-.acts {
-  position: absolute; left: 6px; right: 6px; top: 6px; display: flex; gap: 4px; justify-content: flex-end;
+.s-meta .sq { width: 7px; height: 7px; border-radius: 2px; background: var(--yellow); flex: none; }
+.s-acts {
+  position: absolute; left: 32px; right: 6px; top: 6px; display: flex; gap: 4px; justify-content: flex-end;
   opacity: 0; transition: opacity .12s ease;
 }
-.card:hover .acts, .card:focus-within .acts { opacity: 1; }
-.acts button {
+.s-card:hover .s-acts, .s-card:focus-within .s-acts { opacity: 1; }
+.s-acts button {
   border: 0; border-radius: 8px; height: 24px; min-width: 24px; padding: 0 7px; cursor: pointer;
-  background: var(--btn); color: var(--btn-ink); font: inherit; font-size: 11px; font-weight: 600;
+  background: var(--s-btn); color: var(--s-btn-ink); font: inherit; font-size: 11px; font-weight: 600;
   backdrop-filter: blur(10px); display: grid; place-items: center;
 }
-.acts button svg { width: 13px; height: 13px; }
-.acts .chat { margin-right: auto; background: var(--primary); color: #fff; }
-.acts button:hover { filter: brightness(1.12); }
+.s-acts button svg { width: 13px; height: 13px; }
+.s-acts .go { margin-right: auto; background: var(--s-primary); color: #fff; }
+.s-acts button:hover { filter: brightness(1.12); }
 
-.empty {
-  grid-column: 1 / -1; margin-top: 10px; padding: 16px 14px; border-radius: 14px; line-height: 1.5;
+.s-empty {
+  grid-column: 1 / -1; margin-top: 4px; padding: 14px; border-radius: 14px; line-height: 1.5;
   background: linear-gradient(180deg, var(--gl-top), var(--gl-bot)); border: 1px solid var(--gl-edge); color: var(--muted);
 }
-.empty b { color: var(--ink); }
-.more { grid-column: 1 / -1; color: var(--muted); text-align: center; font-size: 11px; padding: 4px; }
+.s-empty b { color: var(--ink); }
+.s-more { flex: none; align-self: center; white-space: nowrap; writing-mode: horizontal-tb; color: var(--muted); text-align: center; font-size: 11px; padding: 4px; }
 
 /* выделение */
-.tick {
+.s-tick {
   position: absolute; left: 6px; top: 6px; width: 20px; height: 20px; border-radius: 50%;
   border: 1.5px solid rgba(255,255,255,.85); background: rgba(0,0,0,.25); color: transparent;
   display: grid; place-items: center; opacity: 0; transition: opacity .12s ease; cursor: pointer; z-index: 2;
 }
-.tick svg { width: 12px; height: 12px; }
-.card:hover .tick, body.selecting .tick { opacity: 1; }
-.card.on { box-shadow: var(--gl-shadow), 0 0 0 2px #8B7CFF; }
-.card.on .tick { background: linear-gradient(135deg, #8B7CFF, #0A84FF); border-color: transparent; color: #fff; opacity: 1; }
-.card.on img { filter: brightness(.86); }
-body.vscode-light .card.on { box-shadow: var(--gl-shadow), 0 0 0 2px #262626; }
-body.vscode-light .card.on .tick { background: #262626; }
-.acts { left: 32px; }
-body.dragging .card.on { opacity: .55; }
+.s-tick svg { width: 12px; height: 12px; }
+.s-card:hover .s-tick, #shots.selecting .s-tick { opacity: 1; }
+.s-card.on { box-shadow: var(--gl-shadow), 0 0 0 2px #8B7CFF; }
+.s-card.on .s-tick { background: linear-gradient(135deg, #8B7CFF, #0A84FF); border-color: transparent; color: #fff; opacity: 1; }
+.s-card.on img { filter: brightness(.86); }
+body.light .s-card.on { box-shadow: var(--gl-shadow), 0 0 0 2px #262626; }
+body.light .s-card.on .s-tick { background: #262626; }
+#shots.dragging .s-card.on { opacity: .55; }
 
-/* нижняя плашка выделения */
-#bar {
-  position: sticky; bottom: 8px; z-index: 4; margin-top: 12px; display: flex; align-items: center; gap: 6px;
-  padding: 7px 8px 7px 10px; border-radius: 14px; border: 1px solid var(--gl-edge);
+/* плашка выделения внутри выдвижной части */
+#s-bar {
+  position: relative; z-index: 4; margin-top: 4px; min-height: 38px; box-sizing: border-box; display: flex; align-items: center; gap: 6px;
+  padding: 7px 8px 7px 10px; border-radius: 12px; border: 1px solid var(--gl-edge);
   background: linear-gradient(180deg, var(--gl-top), var(--gl-bot)); box-shadow: var(--gl-shadow);
   backdrop-filter: blur(16px);
 }
-#bar[hidden] { display: none; }
-#bar .n { min-width: 20px; height: 20px; border-radius: 6px; background: var(--yellow); color: #0E0E13; font-weight: 700; display: grid; place-items: center; padding: 0 5px; }
-#bar .hint { color: var(--muted); font-size: 11px; margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#bar .hint b { color: var(--ink); }
-#bar button { border: 0; border-radius: 8px; height: 24px; min-width: 24px; padding: 0 8px; cursor: pointer; background: var(--hover); color: var(--ink); font: inherit; font-size: 11px; font-weight: 600; display: grid; place-items: center; }
-#bar button svg { width: 13px; height: 13px; }
-#bar .chat { background: var(--primary); color: #fff; }
+#s-bar .hint.idle { font-style: italic; }
+#s-bar button:disabled { opacity: .4; cursor: default; }
+#s-bar .n { min-width: 20px; height: 20px; border-radius: 6px; background: var(--yellow); color: #0E0E13; font-weight: 700; display: grid; place-items: center; padding: 0 5px; }
+#s-bar .hint { color: var(--muted); font-size: 11px; margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#s-bar .hint b { color: var(--ink); }
+#s-bar button { border: 0; border-radius: 8px; height: 24px; min-width: 24px; padding: 0 8px; cursor: pointer; background: var(--hover); color: var(--ink); font: inherit; font-size: 11px; font-weight: 600; display: grid; place-items: center; }
+#s-bar button svg { width: 13px; height: 13px; }
+#s-bar .go { background: var(--s-primary); color: #fff; }
 
-#ghost {
+#s-ghost {
   position: fixed; top: -100px; left: 0; padding: 5px 10px; border-radius: 9px; font-size: 12px; font-weight: 600;
   background: linear-gradient(135deg, #8B7CFF, #0A84FF); color: #fff;
 }
+
+/* Размер миниатюр: мелкие — вдвое уже. Действия — через выделение и нижнюю плашку. */
+#s-size .i-big { display: none; }
+#shots.small #s-size .i-big { display: block; }
+#shots.small #s-size .i-small { display: none; }
+#shots.small #s-grid { gap: 4px; }
+#shots.small #s-grid .s-card { width: 46px; }
+#shots.small .s-card { border-radius: 9px; }
+#shots.small .s-acts { display: none; }
+#shots.small .s-meta { padding: 10px 4px 3px; font-size: 9.5px; gap: 3px; }
+#shots.small .s-meta .sq { width: 5px; height: 5px; }
+#shots.small .s-tick { left: 3px; top: 3px; width: 15px; height: 15px; border-width: 1.2px; }
+#shots.small .s-tick svg { width: 9px; height: 9px; }
+#shots.small .s-day { margin: 4px 2px -1px; font-size: 10px; }
+
+/* подсказки: кнопка «Подсказки» в шапке показывает и прячет */
+#s-tips { display: none; flex-direction: column; gap: 6px; margin: 6px 0 4px; }
+#shots.tips #s-tips { display: flex; }
+#shots.tips #s-help { color: var(--yellow); }
+.s-tip {
+  display: flex; gap: 9px; align-items: flex-start; padding: 9px 11px; border-radius: 12px;
+  background: linear-gradient(180deg, var(--gl-top), var(--gl-bot)); border: 1px solid var(--gl-edge);
+  color: var(--muted); font-size: 11.5px; line-height: 1.45;
+}
+.s-tip .ti {
+  flex: none; width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; color: #fff;
+  background: var(--s-primary);
+}
+.s-tip .ti svg { width: 14px; height: 14px; }
+.s-tip b { color: var(--ink); font-weight: 600; }
+.s-tip kbd {
+  display: inline-block; min-width: 16px; padding: 0 4px; margin: 0 1px; border-radius: 4px; text-align: center;
+  border: 1px solid var(--gl-edge); background: var(--hover); color: var(--ink); font: inherit; font-size: 10.5px;
+}
+
+/* кнопка «Подсказки»: лампочка + слово */
+.s-ib.s-helpb { width: auto; padding: 0 8px 0 6px; gap: 4px; display: inline-flex; align-items: center; font: inherit; font-size: 11px; font-weight: 600; }
+
+/* --- файл над панелью: плашка превращается в зону броска (с 0.9.34) --- */
+.s-drop { display: none; align-items: center; gap: 8px; font-weight: 650; font-size: 13px; color: var(--ink); letter-spacing: -.01em; }
+.s-drop svg { width: 16px; height: 16px; flex: none; }
+#shots.dropping { border-color: rgba(10,132,255,.9); box-shadow: 0 0 0 3px rgba(10,132,255,.28), 0 14px 40px rgba(10,132,255,.35), inset 0 1px 0 rgba(255,255,255,.12); }
+#shots.dropping #s-head { background: linear-gradient(135deg, rgba(139,124,255,.22), rgba(10,132,255,.22) 60%, rgba(63,216,242,.2)); }
+#shots.dropping .s-title, #shots.dropping .s-count, #shots.dropping .s-tools, #shots.dropping .s-chev { display: none; }
+#shots.dropping .s-drop { display: flex; animation: s-dropin .18s ease; }
+@keyframes s-dropin { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+
+/* --- мелкие миниатюры в 2,5 раза меньше (0.9.36): без подписи времени, ниже выдвижная часть --- */
+#shots.small .s-card { border-radius: 5px; }
+#shots.small .s-meta { font-size: 0; padding: 0; background: none; gap: 0; }
+#shots.small .s-meta .sq { position: absolute; left: 2px; bottom: 2px; width: 5px; height: 5px; border-radius: 2px; }
+#shots.small .s-tick { left: 1px; top: 1px; width: 11px; height: 11px; border-width: 1px; }
+#shots.small .s-tick svg { width: 7px; height: 7px; }
+#shots.small .s-day { margin: 3px 1px -1px; font-size: 9px; }
+#shots.small.open #s-body { max-height: min(40vh, 280px); }
+
+.s-meta .ph { display: inline-flex; width: 9px; height: 11px; color: var(--muted, #8b8f98); flex: none; opacity: .85; }
+.s-meta .ph svg { width: 100%; height: 100%; }
+
+.s-card img.broken { visibility: hidden; }
+.s-card:has(img.broken) { background: color-mix(in srgb, currentColor 10%, transparent); }

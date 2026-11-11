@@ -119,13 +119,16 @@ function parseClaude(content, id, file) {
         || (chat.soDone = blocks.some((b) => b.type === 'tool_use' && b.name === 'StructuredOutput')); // фоновая партия сдаёт итог этим шагом — дальше ответа не будет (0.9.8)
     }
   }
+  // Чаты, запущенные во временной папке (тесты и черновики агентов: /tmp, /private/tmp/claude-…) — не ваши, не показываем (0.9.24)
+  if (/^\/(private\/)?(tmp|var\/folders)\//.test(chat.cwd)) return null;
   chat.title = chat.customTitle || chat.aiTitle || chat.firstUser.split('\n')[0].slice(0, 80) || 'Без названия';
   if (chat.background) { // «Ты фоновый агент… по заданию `…/Папка/00_Задание.md`» → «Папка — партия»
     const m = chat.firstUser.match(/заданию `([^`]+)\/00_[^`/]*`/);
     if (m && !chat.customTitle) chat.title = m[1].split('/').pop() + ' — партия';
   }
   // Партия фоновой задачи сервера («…партию №0031…»): своё название и связь с контрольной точкой (0.9.7)
-  if (chat.background && isJobText(firstRaw)) {
+  // 0.9.26: задание без «партию №N» («Выполни ОДНУ партию по заданию `…/00_Задание.md`») — тоже партия задачи, иначе каждый запуск виден отдельным чатом
+  if (chat.background && (isJobText(firstRaw) || (/заданию `[^`]+\/00_[^`/]*`/.test(firstRaw.slice(0, 600)) && /парти[юяи]/i.test(firstRaw.slice(0, 600))))) {
     chat.job = true; chat.jobDirs = jobDirsOf(firstRaw);
     if (!chat.customTitle && !chat.aiTitle) chat.title = codexJobTitle(firstRaw) || chat.title;
   }
