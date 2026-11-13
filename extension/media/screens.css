@@ -36,7 +36,7 @@ body.light #s-head:hover { background: rgba(0,0,0,.025); }
 }
 body.light .s-ico { background: #262626; box-shadow: 0 1px 3px rgba(0,0,0,.18); }
 .s-ico svg { width: 16px; height: 16px; }
-.s-title { font-weight: 650; font-size: 13px; letter-spacing: -.01em; color: var(--ink); }
+.s-title { font-weight: 650; font-size: 13px; letter-spacing: -.01em; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
 .s-count { display: flex; align-items: center; gap: 5px; margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
 .s-count .tot { min-width: 22px; height: 22px; padding: 0 7px; box-sizing: border-box; display: inline-grid; place-items: center; border-radius: 11px; background: rgba(127,127,127,.16); color: var(--ink); font-weight: 600; font-size: 12px; }
 .s-count .new { color: #0E0E13; background: var(--yellow); border-radius: 11px; height: 22px; padding: 0 8px; display: inline-grid; place-items: center; font-weight: 700; font-size: 11px; }
@@ -169,7 +169,7 @@ body.light .s-card.on .s-tick { background: #262626; }
 
 /* подсказки: кнопка «Подсказки» в шапке показывает и прячет */
 #s-tips { display: none; flex-direction: column; gap: 6px; margin: 6px 0 4px; }
-#shots.tips #s-tips { display: flex; }
+#shots.tips #s-tips { display: flex; } /* 0.9.47: подсказки — только по лампочке (по умолчанию выключена); плашка закрыта — одна строка, снимков не видно */
 #shots.tips #s-help { color: var(--yellow); }
 .s-tip {
   display: flex; gap: 9px; align-items: flex-start; padding: 9px 11px; border-radius: 12px;
@@ -188,7 +188,7 @@ body.light .s-card.on .s-tick { background: #262626; }
 }
 
 /* кнопка «Подсказки»: лампочка + слово */
-.s-ib.s-helpb { width: auto; padding: 0 8px 0 6px; gap: 4px; display: inline-flex; align-items: center; font: inherit; font-size: 11px; font-weight: 600; }
+/* кнопка «Подсказки» — только лампочка, как остальные значки (0.9.44) */
 
 /* --- файл над панелью: плашка превращается в зону броска (с 0.9.34) --- */
 .s-drop { display: none; align-items: center; gap: 8px; font-weight: 650; font-size: 13px; color: var(--ink); letter-spacing: -.01em; }
@@ -207,9 +207,27 @@ body.light .s-card.on .s-tick { background: #262626; }
 #shots.small .s-tick svg { width: 7px; height: 7px; }
 #shots.small .s-day { margin: 3px 1px -1px; font-size: 9px; }
 #shots.small.open #s-body { max-height: min(40vh, 280px); }
+#shots.small.tips.open #s-body { max-height: min(62vh, 440px); } /* с подсказками — выше */
 
 .s-meta .ph { display: inline-flex; width: 9px; height: 11px; color: var(--muted, #8b8f98); flex: none; opacity: .85; }
 .s-meta .ph svg { width: 100%; height: 100%; }
 
 .s-card img.broken { visibility: hidden; }
 .s-card:has(img.broken) { background: color-mix(in srgb, currentColor 10%, transparent); }
+
+/* --- закрытая плашка — тонкая строка (0.9.45): иконка-кружок, название, счётчик, стрелка --- */
+#shots:not(.open):not(.dropping) { border-radius: 11px; box-shadow: 0 1px 3px rgba(0,0,0,.2), inset 0 1px 0 rgba(255,255,255,.06); }
+#shots:not(.open):not(.dropping) #s-head { height: 28px; padding: 0 5px 0 8px; gap: 6px; border-radius: 10px; }
+#shots:not(.open):not(.dropping) .s-ico { width: 16px; height: 16px; border-radius: 5px; box-shadow: none; }
+#shots:not(.open):not(.dropping) .s-ico svg { width: 10px; height: 10px; }
+#shots:not(.open):not(.dropping) .s-title { font-size: 12px; font-weight: 600; color: var(--muted); }
+#shots:not(.open):not(.dropping) .s-count .tot, #shots:not(.open):not(.dropping) .s-count .new { height: 18px; min-width: 18px; font-size: 11px; padding: 0 6px; border-radius: 9px; }
+#shots:not(.open):not(.dropping) .s-chev { width: 20px; height: 20px; }
+body:has(#shots:not(.open)) #list { padding-bottom: 46px; }
+
+/* 0.9.52: тумблер автообновления (раз в 5 с) в шапке плашки; выключен по умолчанию */
+.s-sw { width: 34px; }
+.s-sw .trk { position: relative; width: 22px; height: 12px; border-radius: 6px; background: rgba(127,127,127,.35); transition: background .18s ease; }
+.s-sw .knob { position: absolute; top: 2px; left: 2px; width: 8px; height: 8px; border-radius: 50%; background: var(--ink); opacity: .75; transition: transform .18s cubic-bezier(.2,.8,.2,1), opacity .18s ease; }
+#shots.auto .s-sw .trk { background: var(--yellow); }
+#shots.auto .s-sw .knob { transform: translateX(10px); background: #0E0E13; opacity: 1; }

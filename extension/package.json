@@ -2,7 +2,7 @@
   "name": "clodex",
   "displayName": "Clodex",
   "description": "Чаты Claude Code и Codex в одном списке: поиск по тексту, непрочитанные, фильтры.",
-  "version": "0.9.42",
+  "version": "0.9.60",
   "publisher": "clodex",
   "private": true,
   "engines": {
@@ -61,6 +61,16 @@
           "type": "string",
           "default": "",
           "description": "Папка скриншотов с айфона. Пусто — ~/Claude_AI/06_Загрузки/05_Скриншоты. Команды айфона «Скрин в Clodex» и «В Clodex» сохраняют в iCloud Drive → Команды → Clodex, Clodex переносит оттуда сюда."
+        },
+        "clodex.openOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "При запуске окна с открытой папкой сразу показывать слева панель Clodex (вместо Explorer). Выключить — оставить то, что запомнил VS Code."
+        },
+        "clodex.autoOpenMainFolder": {
+          "type": "boolean",
+          "default": true,
+          "description": "Если окно VS Code открыто без папки — сразу открыть в нём ~/Claude_AI (чтобы чаты не сохранялись отдельно). Выключить — вместо этого будет вопрос."
         }
       }
     },

@@ -463,7 +463,7 @@ function loadRegistry(file) {
   for (const line of content.split('\n')) {
     const cells = line.split('|').map((s) => s.trim());
     if (cells.length < 8 || !/^[a-z0-9]+$/.test(cells[1]) || cells[1] === 'Код') continue;
-    const [, code, fullName, , status, , goal] = cells;
+    const [, code, fullName, sphere, status, , goal] = cells;
     if (status === 'завершён') continue;
     const name = fullName.replace(/^Облачный агент:.*/, 'Облачный агент').split(/ — |: /)[0].trim();
     const words = new Set();
@@ -478,7 +478,7 @@ function loadRegistry(file) {
     // русскому слову разрешаем падежное окончание до 3 букв: «Telegram-бота», «сторожа»
     const res = [...words].map((w) => new RegExp('(?<![\\p{L}\\p{N}])' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
       (/[а-яё]$/i.test(w) && w.length >= 4 ? '[а-яё]{0,3}' : '') + '(?![\\p{L}\\p{N}])', 'iu'));
-    out.push({ code, name, res });
+    out.push({ code, name, sphere, res });
   }
   return out;
 }

@@ -39,8 +39,15 @@
   function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
   // ---------- открыть / закрыть ----------
+  let seenTimer = null;
+  // Плашка раскрыта и снимки на виду — через секунду считаем их просмотренными, счётчик «+N» сбрасывается
+  function scheduleSeen() {
+    clearTimeout(seenTimer);
+    seenTimer = setTimeout(() => { if (root.classList.contains('open')) post({ type: 'allSeen' }); }, 1200);
+  }
   function setOpen(v) {
     root.classList.toggle('open', v);
+    if (v) scheduleSeen();
     head.setAttribute('aria-expanded', String(v));
     if (!v && sel.size) { sel.clear(); paintSel(); }
     post({ type: 'drawer', value: v });
@@ -69,8 +76,7 @@
     // нижняя плашка есть всегда (с 0.9.41), чтобы интерфейс не прыгал при выборе
     const off = n === 0 ? ' disabled' : '';
     bar.hidden = false;
-    bar.innerHTML = '<span class="n">' + n + '</span>' +
-      (n ? '<span class="hint">Перетащите в чат с&nbsp;<b>Shift</b></span>' : '<span class="hint idle">Выберите фото. Несколько — с&nbsp;<b>Shift</b> или&nbsp;<b>⌘</b></span>') +
+    bar.innerHTML = (n ? '<span class="hint">Перетащите в чат с&nbsp;<b>Shift</b></span>' : '<span class="hint idle">Выберите фото. Несколько — с&nbsp;<b>Shift</b> или&nbsp;<b>⌘</b></span>') +
       '<button data-sb="chat" class="go"' + off + '>В чат</button>' +
       '<button data-sb="copy" title="Скопировать пути"' + off + '>' + ICON.copy + '</button>' +
       '<button data-sb="trash" title="В Корзину"' + off + '>' + ICON.trash + '</button>' +
@@ -81,11 +87,13 @@
     items = m.items;
     for (const p of [...sel]) if (!items.some((i) => i.path === p)) sel.delete(p);
     const fresh = items.filter((i) => i.isNew).length;
-    count.innerHTML = (m.total ? '<span class="tot">' + m.total + '</span>' : '') + (fresh ? '<span class="new">+' + fresh + '</span>' : '');
+    // 0.9.51: один счётчик — сколько новых снимков пришло, пока их не посмотрели; общее число убрано
+    count.innerHTML = fresh ? '<span class="new">+' + fresh + '</span>' : '';
+    if (fresh && root.classList.contains('open')) scheduleSeen();
     root.classList.toggle('fresh', fresh > 0);
     root.classList.toggle('empty', !items.length);
     if (!items.length) {
-      grid.innerHTML = '<div class="s-empty"><b>Пока пусто.</b> Как сюда попадают снимки — нажмите «Подсказки» вверху.</div>';
+      grid.innerHTML = '<div class="s-empty"><b>Пока пусто.</b> Как сюда попадают снимки — нажмите значок лампочки.</div>';
       paintSel();
       return;
     }
@@ -186,7 +194,7 @@
 
   // Размер миниатюр: мелкие (по умолчанию) или крупные; выбор хранит расширение
   const sizeBtn = document.getElementById('s-size');
-  sizeBtn.onclick = () => {
+  if (sizeBtn) sizeBtn.onclick = () => {
     const big = !root.classList.contains('big');
     root.classList.toggle('big', big);
     root.classList.toggle('small', !big);
@@ -194,10 +202,18 @@
     post({ type: 'size', size: big ? 'big' : 'small' });
   };
   // Подсказки: кнопка-лампочка в шапке; при пустой плашке видны всегда
-  document.getElementById('s-help').onclick = () => {
+  const helpBtn = document.getElementById('s-help'); if (helpBtn) helpBtn.onclick = () => {
     const v = !root.classList.contains('tips');
     root.classList.toggle('tips', v);
     post({ type: 'tips', value: v });
+  };
+  // Тумблер автообновления раз в 5 с (по умолчанию выключен): включён — панель сама обновляется, выключен — только по кнопке «Обновить»
+  const autoBtn = document.getElementById('s-auto'); if (autoBtn) autoBtn.onclick = () => {
+    const v = !root.classList.contains('auto');
+    root.classList.toggle('auto', v);
+    autoBtn.setAttribute('aria-checked', String(v));
+    autoBtn.title = 'Снимки и фото: автообновление раз в 5 с — ' + (v ? 'включено' : 'выключено') + '. Нажмите, чтобы ' + (v ? 'выключить' : 'включить');
+    post({ type: 'auto', value: v });
   };
   // Нажатие мимо плашки (по списку чатов) — плашка уезжает вниз, место не занимает
   document.addEventListener('mousedown', (e) => {

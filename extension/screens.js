@@ -13,7 +13,7 @@ const INBOX = path.join(HOME, 'Library', 'Mobile Documents', 'iCloud~is~workflow
 const IMAGE = /\.(png|jpe?g|heic|webp|gif)$/i;
 const PHOTOS_ORIGINALS = path.join(HOME, 'Pictures', 'Photos Library.photoslibrary', 'originals');
 const PHOTO_POLL_MS = 6000;
-const POLL_MS = 4000;
+const POLL_MS = 5000;
 const MAX = 60;
 
 function run(cmd, args, timeout = 20000) {
@@ -46,10 +46,13 @@ class ScreensView {
     this.cleanCache();
     this.cleanTimer = setInterval(() => this.cleanCache(), 3600000);
     ctx.subscriptions.push({ dispose: () => clearInterval(this.cleanTimer) });
-    this.timer = setInterval(() => this.scan(), POLL_MS);
+    this.timer = setInterval(() => { if (this.autoOn()) this.scan(); }, POLL_MS);
     ctx.subscriptions.push({ dispose: () => clearInterval(this.timer) });
     this.scan();
   }
+
+  // Автообновление снимков и фото раз в 5 с — тумблер на плашке «Скриншоты и файлы» (0.9.58: касается только снимков; список чатов обновляется всегда; по умолчанию включено)
+  autoOn() { return !!this.ctx.globalState.get('autoRefresh.v2', true); }
 
   dir() {
     const v = vscode.workspace.getConfiguration('clodex').get('screenshotsDir');
@@ -219,7 +222,7 @@ class ScreensView {
       const w = fs.watch(PHOTOS_ORIGINALS, { recursive: true }, (ev, name) => {
         if (name && !IMAGE.test(String(name))) return;
         clearTimeout(t);
-        t = setTimeout(() => this.scan(true), 1200);
+        t = setTimeout(() => { if (this.autoOn()) this.scan(true); }, 1200);
       });
       w.on('error', (e) => this.log.error('фото: слежение за библиотекой остановилось: ' + e));
       this.ctx.subscriptions.push({ dispose: () => { try { w.close(); } catch { } clearTimeout(t); } });
@@ -492,16 +495,18 @@ class ScreensView {
     const big = this.ctx.globalState.get('screens.size', 'small') === 'big';
     const open = this.ctx.globalState.get('screens.open', false);
     const tips = this.ctx.globalState.get('screens.tips', false);
+    const auto = this.autoOn();
     return {
       css: `<link rel="stylesheet" href="${css}">`,
       js,
-      body: `<div id="shots" class="${big ? 'big' : 'small'}${open ? ' open' : ''}${tips ? ' tips' : ''}" tabindex="-1">
+      body: `<div id="shots" class="${big ? 'big' : 'small'}${open ? ' open' : ''}${tips ? ' tips' : ''}${auto ? ' auto' : ''}" tabindex="-1">
 <div id="s-head" role="button" tabindex="0" aria-expanded="${open}" title="Скриншоты с айфона — открыть / закрыть. Файл из Finder можно бросить на эту плашку">
 <span class="s-ico"><svg viewBox="0 0 16 16"><path d="M2 5.3c0-.8.6-1.4 1.4-1.4h1.7l1-1.4h3.8l1 1.4h1.7c.8 0 1.4.6 1.4 1.4v6.3c0 .8-.6 1.4-1.4 1.4H3.4c-.8 0-1.4-.6-1.4-1.4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="8" cy="8.3" r="2.4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></span>
 <span class="s-title">Скриншоты и файлы</span><span class="s-drop"><svg viewBox="0 0 16 16"><path d="M8 2.5v8M4.8 7.6 8 10.8l3.2-3.2M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Отпустите файл — путь уйдёт в чат</span>
 <span class="s-tools">
-<button id="s-help" class="s-ib s-helpb" title="Показать / скрыть подсказки"><svg viewBox="0 0 16 16"><path d="M5.6 10.6C4.4 9.7 3.7 8.4 3.7 7a4.3 4.3 0 1 1 8.6 0c0 1.4-.7 2.7-1.9 3.6v1.2H5.6z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M6.2 14.2h3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span>Подсказки</span></button>
-<button id="s-size" class="s-ib" title="${big ? 'Мелкие миниатюры' : 'Крупные миниатюры'}"><svg class="i-small" viewBox="0 0 16 16"><path d="M2 2h3v3H2zM6.5 2h3v3h-3zM11 2h3v3h-3zM2 6.5h3v3H2zM6.5 6.5h3v3h-3zM11 6.5h3v3h-3zM2 11h3v3H2zM6.5 11h3v3h-3zM11 11h3v3h-3z" fill="currentColor"/></svg><svg class="i-big" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="12" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="9" y="2" width="5" height="12" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button>
+<button id="s-help" class="s-ib s-helpb" title="Подсказки — показать / скрыть (по умолчанию скрыты)" aria-label="Подсказки"><svg viewBox="0 0 16 16"><path d="M5.6 10.6C4.4 9.7 3.7 8.4 3.7 7a4.3 4.3 0 1 1 8.6 0c0 1.4-.7 2.7-1.9 3.6v1.2H5.6z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M6.2 14.2h3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></button>
+
+<button id="s-auto" class="s-ib s-sw" role="switch" aria-checked="${auto}" title="Снимки и фото: автообновление раз в 5 с — ${auto ? 'включено' : 'выключено'}. Нажмите, чтобы ${auto ? 'выключить' : 'включить'}" aria-label="Автообновление снимков и фото раз в 5 секунд"><span class="trk"><span class="knob"></span></span></button>
 <button id="s-allSeen" class="s-ib" title="Отметить все просмотренными"><svg viewBox="0 0 16 16"><path d="M1.5 8.5l3 3 5-6M7.5 11.5l1 1 6-7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
 <button id="s-folder" class="s-ib" title="Открыть папку в Finder"><svg viewBox="0 0 16 16"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.5h5.6c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button>
 <button id="s-refresh" class="s-ib" title="Обновить"><svg viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v2.8h-2.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -509,7 +514,7 @@ class ScreensView {
 <span id="s-count" class="s-count"></span>
 <span class="s-chev"><svg viewBox="0 0 16 16"><path d="M4 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
 </div>
-<div id="s-body"><div id="s-tips"><div class="s-tip"><span class="ti"><svg viewBox="0 0 16 16"><path d="M4 1.8h5l3.2 3.2v8.2c0 .6-.5 1-1 1H4c-.6 0-1-.4-1-1V2.8c0-.6.4-1 1-1z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 1.8V5h3.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></span><span><b>Файл в чат — перетащите.</b> Перетащите файл из Finder на плашку «Скриншоты и файлы» — путь появится в чате.</span></div><div class="s-tip"><span class="ti"><svg viewBox="0 0 16 16"><rect x="1.8" y="3.8" width="12.4" height="8.4" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.6 7h.01M7 7h.01M9.4 7h.01M11.8 7h.01M5 9.8h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span><span><b>Файл в чат — клавишами.</b> Выделите файл в Finder, нажмите <kbd>⌥</kbd><kbd>⌘</kbd><kbd>C</kbd> и вставьте в чат <kbd>⌘</kbd><kbd>V</kbd>.</span></div></div></div><div id="s-grid"></div><div id="s-bar" hidden></div></div>
+<div id="s-body"><div id="s-tips"><div class="s-tip"><span class="ti"><svg viewBox="0 0 16 16"><path d="M4 1.8h5l3.2 3.2v8.2c0 .6-.5 1-1 1H4c-.6 0-1-.4-1-1V2.8c0-.6.4-1 1-1z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 1.8V5h3.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></span><span><b>Файл в чат — перетащите.</b> Перетащите файл из Finder на плашку «Скриншоты и файлы» — путь появится в чате.</span></div><div class="s-tip"><span class="ti"><svg viewBox="0 0 16 16"><rect x="1.8" y="3.8" width="12.4" height="8.4" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.6 7h.01M7 7h.01M9.4 7h.01M11.8 7h.01M5 9.8h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span><span><b>Файл в чат — клавишами.</b> Выделите файл в Finder, нажмите <kbd>⌥</kbd><kbd>⌘</kbd><kbd>C</kbd> и вставьте в чат <kbd>⌘</kbd><kbd>V</kbd>.</span></div></div><div id="s-grid"></div><div id="s-bar" hidden></div></div></div>
 </div>
 <div id="s-ghost"></div>`,
     };
@@ -536,6 +541,11 @@ class ScreensView {
       if (m.type === 'tips') await this.ctx.globalState.update('screens.tips', !!m.value);
       if (m.type === 'size') await this.ctx.globalState.update('screens.size', m.size === 'big' ? 'big' : 'small');
       if (m.type === 'refresh') await this.scan(true);
+      if (m.type === 'auto') {
+        await this.ctx.globalState.update('autoRefresh.v2', !!m.value);
+        this.log.info('автообновление снимков раз в 5 с: ' + (m.value ? 'включено' : 'выключено'));
+        if (m.value) await this.scan(true); // включили — сразу свежие снимки
+      }
       if (m.type === 'allSeen') this.markSeen();
       if (m.type === 'folder') { fs.mkdirSync(this.dir(), { recursive: true }); await run('open', [this.dir()]); }
     } catch (e) { this.log.error('скриншоты: ' + (e && e.stack || e)); }

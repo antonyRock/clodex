@@ -12,7 +12,7 @@ const JOBS_TTL = 30 * 1000; // контрольные точки задач пе
 // Реестр проектов рабочей папки агента: ярлык ~/Claude_AI ставит комплект установки.
 const REGISTRY = path.join(HOME, 'Claude_AI', '03_Проекты', '00_Реестр проектов.md');
 // При первом запуске переносится состояние прежней сборки Clodex с другим издателем (<кто-то>.clodex).
-const STATE_KEYS = ['initialized', 'seen', 'groupOverride', 'groupAlias', 'dissolved', 'groupOrder', 'collapsed', 'archived', 'titles', 'favorites', 'favChats', 'manualUnread'];
+const STATE_KEYS = ['initialized', 'seen', 'groupOverride', 'groupAlias', 'dissolved', 'groupOrder', 'collapsed', 'archived', 'titles', 'favorites', 'favChats', 'scopes', 'manualUnread', 'opened'];
 
 const WORKING_MS = 3 * 60 * 1000;  // файл менялся недавно и ответа нет — агент работает
 const POLL_VISIBLE = 4000;
@@ -67,6 +67,14 @@ async function activate(context) {
   provider.start();
   setTimeout(() => provider.openPending(), 1500); // дать Claude Code запуститься
   provider.checkFolder();
+  // При запуске окна с папкой слева сразу панель Clodex, а не Explorer.
+  // У VS Code нет настройки «какая панель при старте», и последнюю он не запоминает.
+  try {
+    const cfg = vscode.workspace.getConfiguration('clodex');
+    if (cfg.get('openOnStartup', true) && vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length) {
+      setTimeout(() => { vscode.commands.executeCommand('workbench.view.extension.clodex').then(undefined, () => {}); }, 2500); // после восстановления окна
+    }
+  } catch (e) { log.error('openOnStartup: ' + (e && e.stack || e)); }
   log.info('Clodex запущен');
 }
 
@@ -96,6 +104,13 @@ class ClodexView {
   // ---------- состояние Clodex ----------
   get seen() { return this.ctx.globalState.get('seen', {}); }
   get groupOverride() { return this.ctx.globalState.get('groupOverride', {}); }
+  // Когда чат последний раз открывали (через Clodex или вкладкой при активном окне) — для фильтра «Активные».
+  noteOpened(key) {
+    const o = this.ctx.globalState.get('opened', {});
+    if (Date.now() - (o[key] || 0) < 60e3) return;
+    o[key] = Date.now();
+    this.ctx.globalState.update('opened', o);
+  }
   async setSeen(key, t) {
     const s = { ...this.seen, [key]: t };
     await this.ctx.globalState.update('seen', s);
@@ -204,6 +219,9 @@ class ClodexView {
       if (t && t.input instanceof vscode.TabInputWebview && t.input.viewType.includes('claudeVSCodePanel')) labels.add(t.label);
     }
     if (!labels.size) return;
+    let noted = false;
+    for (const c of this.chats) if (c.agent === 'claude' && [...labels].some((l) => tabMatches(l, c.title))) { this.noteOpened(c.key); noted = true; }
+    if (noted && !silent) this.push();
     const seen = this.seen;
     const manual = this.manualUnread;
     let upd = false;
@@ -292,11 +310,13 @@ class ClodexView {
 
   payload() {
     const seen = this.seen;
+    const opened = this.ctx.globalState.get('opened', {});
     const jobs = this.jobs();
     return this.chats.map((c) => ({
       key: c.key, agent: c.agent, title: this.titleOf(c), group: this.groupOf(c),
-      ts: c.lastTs, status: this.status_(c, seen),
+      ts: c.lastTs, opened: opened[c.key] || 0, status: this.status_(c, seen),
       waiting: c.finished && c.lastAssistantTs >= c.lastUserTs && isQuestion(c.lastAssistantText),
+      ...this.scopeOf(c),
       archived: this.isArchived(c), background: !!c.background, bot: !!c.bot, ctx: c.ctx || 0,
       // к какой задаче относится партия (и закончившаяся тоже): в списке показываем только последнюю партию задачи
       jobFolder: c.job ? ((jobs.find((j) => (c.jobDirs || []).includes(j.folder)) || {}).folder || this.titleOf(c).replace(/\s+—\s+партия.*$/, '')) : undefined,
@@ -304,6 +324,16 @@ class ClodexView {
       // бот: файлы, которые он правил за последние 15 минут (путь от Claude_AI) — подсказка плашки «бот»
       editing: c.bot ? (c.edits || []).filter((e) => Date.now() - e.t < 15 * 60e3).map((e) => e.f.replace(/^.*\/memory\//, 'память агента: ').replace(/^.*?Claude_AI\//, '')) : undefined,
     }));
+  }
+
+  // Личный / рабочий (0.9.46): своя метка чата, иначе по сфере проекта из реестра (Рабочий → рабочий; Личный и Система → личный; без проекта — без метки)
+  scopeOf(c) {
+    const own = this.gs.get('scopes', {})[c.key];
+    if (own === 'work' || own === 'personal') return { scope: own, scopeAuto: false };
+    const g = this.groupOf(c);
+    const p = this.registry().find((r) => r.name === g);
+    const s = p ? (p.sphere === 'Рабочий' ? 'work' : p.sphere === 'Личный' || p.sphere === 'Система' ? 'personal' : '') : '';
+    return { scope: s, scopeAuto: true };
   }
 
   titleOf(c) { return this.gs.get('titles', {})[c.key] || c.title; }
@@ -431,6 +461,7 @@ class ClodexView {
     const c = this.byKey.get(key);
     if (!c) return;
     await this.setRead(key, true);
+    this.noteOpened(key);
     this.push();
     if (c.bot) return this.openBot(c);
     if (c.background) return this.openTranscript(c);
@@ -491,6 +522,11 @@ class ClodexView {
     try { main = fs.realpathSync(path.join(HOME, 'Claude_AI')); } catch { return; } // нет рабочей папки — молчим
     const folders = (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath);
     if (folders.includes(main)) return;
+    // Пустое окно (без папки) — сразу открыть Claude_AI, без вопросов.
+    if (!folders.length && vscode.workspace.getConfiguration('clodex').get('autoOpenMainFolder', true)) {
+      await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(main), { forceNewWindow: false });
+      return;
+    }
     let why = 'Это окно открыто без папки';
     if (folders.length) {
       let real = folders[0];
@@ -869,11 +905,12 @@ class ClodexView {
 <div id="grid"></div>
 <div id="top">
   <div class="brand"><span class="word">Clodex</span><span class="sq"></span><button id="sum" class="sum"></button><button id="agentBadge" class="agentb" hidden></button><button id="botBadge" class="agentb" hidden></button>
-    <span class="tools"><button id="newGroup" class="ib" title="Создать новую группу"><svg viewBox="0 0 16 16"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.5h5.6c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7v4M6 9h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button><button id="themeBtn" class="ib" title="Светлая / тёмная тема VS Code"></button><button id="foldAll" class="ib"></button><button id="sizeBtn" class="ib" title="Размер: список Clodex и текст чатов"><svg viewBox="0 0 16 16"><path d="M1.5 12.5 4.6 4h.8l3.1 8.5M2.6 9.6h4.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.6 12.5l2.1-5.6h.6l2.1 5.6M10.3 10.8h3.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button id="agentsBtn" class="ib" title="Фильтр: Claude / Codex, архив"><svg viewBox="0 0 16 16"><path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.2V8.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button></span></div>
+    <span class="tools"><button id="newGroup" class="ib" title="Создать новую группу"><svg viewBox="0 0 16 16"><path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.5h5.6c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7v4M6 9h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></button><button id="themeBtn" class="ib" title="Светлая / тёмная тема VS Code"></button><button id="foldAll" class="ib"></button><button id="sizeBtn" class="ib" title="Размер: список Clodex и текст чатов"><svg viewBox="0 0 16 16"><path d="M1.5 12.5 4.6 4h.8l3.1 8.5M2.6 9.6h4.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.6 12.5l2.1-5.6h.6l2.1 5.6M10.3 10.8h3.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button><button id="agentsBtn" class="ib" title="Ещё: чаты Claude / Codex, «Жду ответа», архив"><svg viewBox="0 0 16 16"><path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.2V8.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg></button></span></div>
   <div class="searchbox"><input id="q" type="search" placeholder="Поиск по тексту чатов…" spellcheck="false"></div>
   <div class="newrow"><button class="nbig claude" data-new="claude" title="Новый чат с Claude"><span class="nbi"><span class="ag claude">C</span></span><span class="nbt">Claude</span><span class="nbp">+</span></button><button class="nbig codex" data-new="codex" title="Новый чат с Codex"><span class="nbi"><span class="ag codex">X</span></span><span class="nbt">Codex</span><span class="nbp">+</span></button></div>
   <div class="row"><div id="filters"></div></div>
   <div id="agentsMenu" class="pop" hidden></div>
+  <div id="scopeMenu" class="pop scope" hidden></div>
   <div id="sizeMenu" class="pop size" hidden></div>
 </div>
 <div id="list"></div>
@@ -895,6 +932,11 @@ ${sh ? sh.body : ''}
       if (m.type === 'continue') this.continueChat(m.key);
       if (m.type === 'newGroup') this.newGroup();
       if (m.type === 'move') this.moveToGroup(m.key, m.group);
+      if (m.type === 'scope') {
+        const s = { ...this.gs.get('scopes', {}) };
+        if (m.value === 'work' || m.value === 'personal') s[m.key] = m.value; else delete s[m.key]; // пусто — вернуть авто-метку по проекту
+        await this.gs.update('scopes', s); this.push();
+      }
       if (m.type === 'favChat') {
         const f = { ...this.gs.get('favChats', {}) };
         if (m.value) f[m.key] = true; else delete f[m.key];

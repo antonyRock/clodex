@@ -12,6 +12,13 @@
   const st = vscode.getState() || {};
   st.filter = st.filter || 'all'; st.q = st.q || '';
   if (!st.agents) st.agents = { claude: true, codex: true };
+  // 0.9.56: фильтр «личные / рабочие» — любые сочетания: st.scopes = { work, personal, none } (true — показывать). Раньше был один выбор st.scope.
+  if (!st.scopes) {
+    const o = st.scope; // перенос старого значения: all | work | personal | none
+    st.scopes = o === 'work' || o === 'personal' || o === 'none' ? { work: o === 'work', personal: o === 'personal', none: o === 'none' } : { work: true, personal: true, none: true };
+  }
+  delete st.scope;
+  const scopeAll = () => st.scopes.work && st.scopes.personal && st.scopes.none;
   const NO_GROUP = 'Без группы';
   let items = [], favorites = {}, favChats = {}, collapsed = {}, order = [], icons = {}, customGroups = [], lastAgent = 'claude', installed = { claude: true, codex: true };
   // Открытый чат остаётся в фильтре (даже став прочитанным), пока не откроете другой.
@@ -34,7 +41,7 @@
 
   // «Последние» убраны, «Все» называются «Недавние»; «Не прочитано» — по клику на счётчик новых в заголовке
   if (st.filter === 'recent') st.filter = 'all';
-  const FILTERS = [['all', 'Недавние'], ['fav', 'Избранное'], ['active', 'Активные'], ['waiting', 'Жду ответа']]; // архив — в меню воронки
+  const FILTERS = [['all', 'Недавние'], ['fav', 'Избранное'], ['active', 'Активные']]; // четвёртая плитка — «Фильтр» (личные / рабочие); «Жду ответа» и архив — в меню воронки (0.9.46)
   // Значки плиток: у каждого фильтра свой
   const TILE_ICON = {
     all: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 5v3.2l2.2 1.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
@@ -43,7 +50,7 @@
     check: '<svg viewBox="0 0 16 16"><path d="M3.5 8.3l3 3 6-6.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
   const FILTER_TIP = {
-    active: 'Агент работает, ответил, а вы не прочитали, или в чате что-то было за последние 2 часа',
+    active: 'Агент работает, ответил, а вы не прочитали, в чате что-то было за последние 24 часа или вы открывали его за последние 24 часа',
     all: 'Все чаты, свежие сверху', unread: 'Агент ответил, а вы не открывали',
     waiting: 'Последний ответ агента кончается вопросом, а вы после него не писали', archive: 'Чаты, убранные в архив', fav: 'По группам — избранные группы, списком — избранные чаты (звёздочка у группы или у чата). Число — сколько их в текущем виде',
   };
@@ -57,11 +64,12 @@
     list: '<svg class="vi" viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
   };
   // Активные: агент работает, не прочитан или в чате что-то было за последние 2 часа; фоновые — только пока работают
-  const ACTIVE_MS = 2 * 3600e3;
+  const ACTIVE_MS = 24 * 3600e3; // «Активные»: последнее сообщение или открытие чата не старше суток
+  const HOT_MS = 2 * 3600e3; // «Недавние» третьим нажатием: свежее 2 часов
   // значок Telegram: бумажный самолётик в голубом круге
   const TG_ICON = '<svg class="bico tg" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="#2AABEE"/><path fill="#fff" d="M5.4 11.7l11.2-4.3c.5-.2 1 .1.8.9l-1.9 9c-.1.6-.5.8-1 .5l-2.9-2.1-1.4 1.3c-.2.2-.3.3-.6.3l.2-3 5.4-4.9c.2-.2 0-.3-.3-.1l-6.7 4.2-2.9-.9c-.6-.2-.6-.6.1-.9z"/></svg>';
   const BOT_COOL_MS = 2 * 60e3; // сколько плашка «бот» горит жёлтым после ответа
-  const isActive = (i) => i.status === 'working' || ((!i.background || i.bot) && (i.status === 'unread' || Date.now() - i.ts < ACTIVE_MS)); // бот: разговор за 2 часа — тоже активный
+  const isActive = (i, ms = ACTIVE_MS) => i.status === 'working' || ((!i.background || i.bot) && (i.status === 'unread' || Date.now() - i.ts < ms || (ms === ACTIVE_MS && Date.now() - (i.opened || 0) < ms))); // бот: разговор за 2 часа — тоже активный
   const BOLT = '<svg class="bolt" viewBox="0 0 16 16"><path d="M9.2 1.5 3.5 9h4l-.9 5.5L12.5 7h-4z" fill="currentColor"/></svg>';
   const ICON = {
     cont: '<svg viewBox="0 0 16 16"><path d="M3 8h8M8 4.5L11.5 8 8 11.5M13.5 3.5v9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -117,7 +125,8 @@
     return h;
   }
 
-  const byAgent = (i) => !!st.agents[i.agent];
+  const inScope = (i) => scopeAll() || !!st.scopes[i.scope || 'none'];
+  const byAgent = (i) => !!st.agents[i.agent] && inScope(i);
   const live = () => items.filter((i) => !i.archived && byAgent(i));
 
   let lastCnt = { archive: 0 };
@@ -125,9 +134,27 @@
   function renderMenu() {
     const row = (k) => `<button class="mi ${st.agents[k] ? 'on' : ''}" data-a="${k}"><span class="ck">${st.agents[k] ? TILE_ICON.check : ''}</span>${badge(k)}<span>${agName(k)}</span></button>`;
     $('agentsMenu').innerHTML = row('claude') + row('codex') + '<div class="msep"></div>'
+      + `<button class="mi ${st.filter === 'waiting' ? 'on' : ''}" data-waitmenu="1" title="Последний ответ агента кончается вопросом, а вы после него не писали"><span class="ck">${st.filter === 'waiting' ? TILE_ICON.check : ''}</span><span class="ai">${TILE_ICON.waiting}</span><span>Жду ответа</span><b>${lastCnt.waiting || ''}</b></button>`
       + `<button class="mi ${st.filter === 'archive' ? 'on' : ''}" data-archmenu="1"><span class="ck">${st.filter === 'archive' ? TILE_ICON.check : ''}</span><span class="ai">${TILE_ICON.disk}</span><span>Архив</span><b>${lastCnt.archive || ''}</b></button>`;
   }
   const closeMenu = () => { $('agentsMenu').hidden = true; };
+  // Меню «Фильтр» (0.9.46): все / рабочие / личные / без метки — поверх любой плитки
+  const SC = { all: 'Все чаты', work: 'Рабочие', personal: 'Личные', none: 'Без метки' };
+  const SC_LET = { work: 'Р', personal: 'Л' };
+  function renderScopeMenu() {
+    const base = items.filter((i) => !i.archived && st.agents[i.agent]);
+    const n = { all: base.length, work: base.filter((i) => i.scope === 'work').length, personal: base.filter((i) => i.scope === 'personal').length, none: base.filter((i) => !i.scope).length };
+    const isOn = (k) => (k === 'all' ? scopeAll() : !!st.scopes[k]);
+    const row = (k) => `<button class="mi ${isOn(k) ? 'on' : ''}" data-scope="${k}"><span class="ck">${isOn(k) ? TILE_ICON.check : ''}</span>${SC_LET[k] ? `<span class="sc sc-${k}">${SC_LET[k]}</span>` : '<span class="sc sc-none">·</span>'}<span>${SC[k]}</span><b>${n[k] || ''}</b></button>`;
+    $('scopeMenu').innerHTML = row('all') + '<div class="msep"></div>' + row('work') + row('personal') + row('none')
+      + '<div class="mhint">Можно отметить несколько: например «Рабочие» и «Без метки». Метка чата — кнопка Р / Л слева в строке. Без неё чат берёт сферу проекта из реестра.</div>';
+  }
+  function openScopeMenu() {
+    const m = $('scopeMenu'), b = document.querySelector('[data-scopebtn]'), top = $('top');
+    if (!m.hidden) { m.hidden = true; return; }
+    closeMenu(); renderScopeMenu(); m.hidden = false;
+    if (b && top) { const r = b.getBoundingClientRect(), t = top.getBoundingClientRect(); m.style.top = (r.bottom - t.top + 4) + 'px'; m.style.right = Math.max(6, t.right - r.right) + 'px'; }
+  }
 
   // Меню «Размер» (0.8.6): масштаб Clodex и шрифт чатов Claude/Codex (настройка VS Code chat.fontSize)
   let sizes = { zoom: Number(document.documentElement.dataset.zoom) || 1, chatFont: 13, chatDefault: 13 };
@@ -145,21 +172,31 @@
   // ушли из панели (щелчок в чат, редактор, другое окно) — меню закрываются сами (0.8.7)
   window.addEventListener('blur', () => { closeSizeMenu(); closeMenu(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) { closeSizeMenu(); closeMenu(); } });
+  let lastFilt = '';
+  const setH = (el, h) => { if (el.innerHTML !== h) el.innerHTML = h; };
   function renderFilters() {
     const v = live();
     const cnt = {
       unread: v.filter((i) => i.status === 'unread').length,
       waiting: v.filter((i) => i.waiting).length,
       archive: items.filter((i) => i.archived && byAgent(i)).length,
-      active: v.filter(isActive).length,
+      active: v.filter((i) => isActive(i)).length,
       // Избранное: по группам — число избранных групп, списком — число избранных чатов (0.9.14)
       fav: isGrouped('fav') ? new Set(v.filter((i) => favorites[i.group]).map((i) => i.group)).size : v.filter((i) => favChats[i.key]).length,
     };
     // Плитки одного размера: значок, подпись, число в углу; у выбранной — значок «группы / список» в другом углу
     const tileIcon = (k) => k === 'active' ? BOLT : k === 'fav' ? `<span class="fstar">${ICON.star}</span>` : TILE_ICON[k] || '';
-    $('filters').innerHTML =
-      FILTERS.map(([k, n]) => `<button class="tile t-${k} ${st.filter === k ? 'on' : ''} ${(k === 'unread' || k === 'active') && cnt[k] ? 'hot' : ''}" data-f="${k}" title="${(FILTER_TIP[k] || 'Все чаты') + (st.filter === k ? '. Нажмите ещё раз — ' + (k === 'all' ? (st.hot ? 'все чаты по группам' : isGrouped(k) ? 'списком' : 'по группам, только непрочитанные и свежее 2 часов') : isGrouped(k) ? 'списком' : 'по группам') : '')}"><span class="ti">${tileIcon(k)}</span><span class="tl">${n}</span>${cnt[k] ? `<b>${cnt[k]}</b>` : ''}${st.filter === k ? `<span class="mode">${k === 'all' && st.hot ? VIEW_ICON.hot : isGrouped(k) ? VIEW_ICON.groups : VIEW_ICON.list}</span>` : ''}</button>`).join('')
+    const FUNNEL = '<svg viewBox="0 0 16 16"><path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.2V8.5z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+    const scSel = ['work', 'personal', 'none'].filter((k) => st.scopes[k]);
+    const scShort = { work: 'Раб', personal: 'Лич', none: 'без' };
+    const scLabel = scopeAll() ? 'Фильтр' : scSel.length === 1 ? SC[scSel[0]] : scSel.map((k) => scShort[k]).join(' + ');
+    const scopeTile = `<button class="tile t-scope ${scopeAll() ? '' : 'set'}" data-scopebtn="1" title="${scopeAll() ? 'Фильтр: личные / рабочие чаты' : 'Показаны: ' + scSel.map((k) => SC[k].toLowerCase()).join(' + ') + '. Нажмите — сменить'}"><span class="ti">${FUNNEL}</span><span class="tl">${scLabel}</span></button>`;
+    const waitBar = `<div class="archbar"><span class="ai">${TILE_ICON.waiting}</span>Жду ответа <b>${cnt.waiting}</b><button class="ib x" data-archclose="1" title="Закрыть">✕</button></div>`;
+    const fhtml =
+      FILTERS.map(([k, n]) => `<button class="tile t-${k} ${st.filter === k ? 'on' : ''} ${k === 'unread' && cnt[k] ? 'hot' : ''}" data-f="${k}" title="${(FILTER_TIP[k] || 'Все чаты') + (st.filter === k ? '. Нажмите ещё раз — ' + (k === 'all' ? (st.hot ? 'все чаты по группам' : isGrouped(k) ? 'списком' : 'по группам, только непрочитанные и свежее 2 часов') : isGrouped(k) ? 'списком' : 'по группам') : '')}"><span class="ti">${tileIcon(k)}</span><span class="tl">${n}</span>${cnt[k] ? `<b>${cnt[k]}</b>` : ''}${st.filter === k ? `<span class="mode">${k === 'all' && st.hot ? VIEW_ICON.hot : isGrouped(k) ? VIEW_ICON.groups : VIEW_ICON.list}</span>` : ''}</button>`).join('')
+      + scopeTile + (st.filter === 'waiting' ? waitBar : '')
       + (st.filter === 'archive' ? `<div class="archbar"><span class="ai">${TILE_ICON.disk}</span>Архив <b>${cnt.archive}</b><button class="ib" data-f="archive" title="${isGrouped('archive') ? 'Показать списком' : 'Разложить по группам'}">${isGrouped('archive') ? VIEW_ICON.groups : VIEW_ICON.list}</button><button class="ib x" data-archclose="1" title="Закрыть архив">✕</button></div>` : '');
+    if (fhtml !== lastFilt) { $('filters').innerHTML = fhtml; lastFilt = fhtml; } // 0.9.54: не пересоздавать плитки без изменений — иначе сбрасывается наведение
     lastCnt = cnt;
     $('sum').innerHTML = cnt.unread ? `<span class="pulse"></span>${cnt.unread} новых` : 'всё прочитано';
     $('sum').title = st.filter === 'unread' ? 'Показаны непрочитанные — нажмите, чтобы вернуться к «Недавним»' : cnt.unread ? `Непрочитанных чатов: ${cnt.unread} — нажмите, чтобы показать только их` : 'Показать непрочитанные';
@@ -172,7 +209,7 @@
     const ab = $('agentBadge');
     ab.hidden = !nAgent && !bgDay && st.filter !== 'bg';
     ab.className = 'agentb' + (nAgent ? ' run' : '') + (st.filter === 'bg' ? ' on' : '');
-    ab.innerHTML = (nAgent ? '<span class="spin"></span>' : '') + '<span class="bico">🧑‍💻</span>' + (onePct != null ? `агент · ${onePct}%` : nAgent ? `агент ${nAgent}` : 'агент');
+    setH(ab, (nAgent ? '<span class="spin"></span>' : '') + '<span class="bico">🧑‍💻</span>' + (onePct != null ? `агент · ${onePct}%` : nAgent ? `агент ${nAgent}` : 'агент'));
     ab.title = (nAgent ? `На сервере работает фоновых задач: ${nAgent}` + (jobs.length ? ` (${jobs.map((j, k) => j + (jobPct[k] != null ? ` — ${jobPct[k]}%` : '')).join(', ')})` : '') : 'Сейчас на сервере ничего не работает') + (bgDay ? `. Фоновых чатов за сутки: ${bgDay}` : '') + '. Нажмите — что делает агент';
     // «бот»: разговоры с Telegram-ботом. Мигает, пока бот отвечает; клик — только его чаты
     const botAll = items.filter((i) => i.bot);
@@ -183,7 +220,7 @@
     const tb = $('botBadge');
     tb.hidden = !botAll.length;
     tb.className = 'agentb' + (botWork.length ? ' run' : botCool.length ? ' cool' : '') + (st.filter === 'tg' ? ' on' : '');
-    tb.innerHTML = (botWork.length ? '<span class="pulse"></span>' : '') + TG_ICON + 'бот';
+    setH(tb, (botWork.length ? '<span class="pulse"></span>' : '') + TG_ICON + 'бот');
     const edits = [...new Set((botWork.length ? botWork : botCool).flatMap((i) => i.editing || []))];
     tb.title = (botWork.length
       ? `Telegram-бот сейчас отвечает: «${botWork.map((i) => i.title).join('», «')}».` +
@@ -197,6 +234,7 @@
     $('agentsBtn').classList.toggle('on', hidden || st.filter === 'archive');
     $('agentsBtn').title = (hidden ? `Показаны только чаты ${st.agents.claude ? 'Claude' : 'Codex'}` : 'Фильтр: Claude / Codex') + (st.filter === 'archive' ? '. Открыт архив' : ', архив');
     if (!$('agentsMenu').hidden) renderMenu();
+    if (!$('scopeMenu').hidden) renderScopeMenu();
   }
 
   // Вес чата: сколько токенов перечитывает каждое новое сообщение. Показываем от 100 тыс.
@@ -210,12 +248,14 @@
     return `<span class="wt ${i.ctx >= 200000 ? 'huge' : ''}" title="${tip}">${k}k</span>`;
   }
 
+  const scopeTip = (i) => (i.scope ? `${SC[i.scope].slice(0, -1) + 'й'}${i.scopeAuto ? ' (по проекту)' : ''}. Нажмите — ${i.scope === 'work' ? 'личный' : i.scopeAuto ? 'рабочий' : 'вернуть метку по проекту'}` : 'Без метки. Нажмите — рабочий');
   function row(i, snippet) {
     const tip = i.status === 'unread' ? 'Не прочитан — нажмите, чтобы отметить прочитанным' : i.status === 'working' ? (i.job ? `Идёт фоновая задача: ${i.job.progress || i.job.name}` : 'Агент работает') : 'Прочитан — нажмите, чтобы вернуть «не прочитано»';
     return `<div draggable="true" class="chat ${i.status} ${i.archived ? 'arch' : ''} ${i.key === sticky ? 'current' : ''}" data-k="${esc(i.key)}" title="${esc(i.title)}">
       <span class="dot" data-dot="1" title="${tip}"></span>
-      ${i.bot ? `<span class="ag logo tg" title="Разговор с Telegram-ботом">${TG_ICON}</span>` : badge(i.agent, 'Чат ' + agName(i.agent))}
+      <button class="ib cscope ${i.scope ? 'sc-' + i.scope : ''} ${i.scopeAuto ? 'auto' : ''}" data-cscope="1" title="${scopeTip(i)}">${SC_LET[i.scope] || '·'}</button>
       <span class="t">${resultQ && snippet !== undefined ? mark(i.title, resultQ) : esc(i.title)}${i.waiting ? '<span class="q" title="Агент задал вопрос и ждёт ответа">?</span>' : ''}</span>
+      ${i.bot ? `<span class="ag logo tg" title="Разговор с Telegram-ботом">${TG_ICON}</span>` : i.agent === 'claude' ? '' : badge(i.agent, 'Чат ' + agName(i.agent))}
       <button class="ib cstar ${favChats[i.key] ? 'on' : ''}" data-cstar="1" title="${favChats[i.key] ? 'Убрать чат из избранного' : 'Чат в избранное'}">${ICON.star}</button>
       ${weight(i)}
       ${i.job && i.job.pct != null ? `<span class="jp" title="${esc(i.job.name)}: ${esc(i.job.progress)}${i.job.batch ? ', идёт партия ' + i.job.batch : ''}">${i.job.pct}%</span>` : ''}
@@ -223,7 +263,6 @@
       <span class="acts">
         ${i.bot ? `<button class="ib cont" data-cont="1" title="Продолжить на Mac: новый чат Claude со ссылкой на этот разговор с ботом. Сам разговор бота не меняется.">${ICON.cont}</button>` : ''}
         ${i.agent === 'claude' && i.ctx >= 100000 && !i.background ? `<button class="ib cont" data-cont="1" title="Продолжить в новом чате: откроется новый чат Claude в этой группе, в поле ввода — текст с отсылкой к этому чату. Проверьте и нажмите Enter.">${ICON.cont}</button>` : ''}
-        <button class="ib" data-ren="1" title="Переименовать">${ICON.pencil}</button>
         <button class="ib" data-arch="1" title="${i.archived ? 'Вернуть из архива' : 'В архив'}">${i.archived ? ICON.unarchive : ICON.archive}</button>
         <button class="ib" data-more="1" title="Ещё: группа, прочитано, копировать">${ICON.more}</button>
       </span>
@@ -264,6 +303,19 @@
     b.disabled = !shownGroups.length;
     if (!shownGroups.length) b.title = 'Свернуть / раскрыть группы — доступно, когда чаты показаны по группам';
   }
+  // 0.9.50: список обновляется по частям. Раньше каждый опрос данных (раз в 4 с, пока где-то идёт работа) пересоздавал весь список,
+  // и кнопки при наведении (звезда, «+», «⋯», архив) исчезали, пока мышь не сдвинется. Теперь заменяются только изменившиеся карточки.
+  function setList(html) {
+    const t = document.createElement('template');
+    t.innerHTML = html;
+    const next = [...t.content.children];
+    const cur = [...list.children];
+    next.forEach((n, i) => {
+      if (!cur[i]) list.appendChild(n);
+      else if (cur[i].outerHTML !== n.outerHTML) list.replaceChild(n, cur[i]);
+    });
+    for (let i = cur.length - 1; i >= next.length; i--) cur[i].remove();
+  }
   function render() { try { render_(); updateFold(); } catch (e) { reportError(e && e.stack || e); } }
   function render_() {
     shownGroups = [];
@@ -271,14 +323,14 @@
     if (results) {
       const map = new Map(results.map((r) => [r.key, r.snippet]));
       const found = items.filter((i) => map.has(i.key) && byAgent(i)).sort((a, b) => b.ts - a.ts);
-      list.innerHTML = `<div class="hint">Найдено: ${found.length}</div>` +
-        (found.length ? `<div class="card flat">${found.map((i) => row(i, map.get(i.key) || '')).join('')}</div>` : `<div class="empty">Ничего не найдено</div>`);
+      setList(`<div class="hint">Найдено: ${found.length}</div>` +
+        (found.length ? `<div class="card flat">${found.map((i) => row(i, map.get(i.key) || '')).join('')}</div>` : `<div class="empty">Ничего не найдено</div>`));
       return;
     }
     let v = (st.filter === 'archive' ? items.filter((i) => i.archived && byAgent(i)) : live()).sort((a, b) => b.ts - a.ts);
     // Избранное: по группам — только избранные группы; списком — только избранные чаты, без групп (0.9.14)
     if (st.filter === 'fav') v = v.filter((i) => isGrouped('fav') ? favorites[i.group] : favChats[i.key]);
-    if (st.filter === 'all' && st.hot) v = v.filter((i) => isActive(i) || keep(i)); // третье нажатие «Недавние»: непрочитанные и свежее 2 часов, по группам
+    if (st.filter === 'all' && st.hot) v = v.filter((i) => isActive(i, HOT_MS) || keep(i)); // третье нажатие «Недавние»: непрочитанные и свежее 2 часов, по группам
     if (st.filter === 'unread') v = v.filter((i) => i.status === 'unread' || keep(i));
     if (st.filter === 'active') v = v.filter((i) => isActive(i) || keep(i));
     if (st.filter === 'waiting') v = v.filter((i) => i.waiting || keep(i));
@@ -289,18 +341,18 @@
     if (st.filter === 'bg') v = v.filter((i) => i.background && !i.bot);
     if (st.filter === 'tg') v = v.filter((i) => i.bot);
     if (!v.length) {
-      const msg = { unread: 'Всё прочитано', all: st.hot ? 'Нет непрочитанных и свежее 2 часов — нажмите «Недавние» ещё раз' : '', waiting: 'Никто не ждёт ответа', archive: 'Архив пуст', tg: 'Разговоров с ботом нет', fav: isGrouped('fav') ? 'Избранных групп нет — наведите на группу и нажмите звёздочку' : 'Избранных чатов нет — наведите на чат и нажмите звёздочку', active: 'Активных нет: никто не работает, не ждёт и не ответил' }[st.filter] || 'Чатов нет';
-      list.innerHTML = `<div class="empty">${msg}</div>`;
+      const msg = { unread: 'Всё прочитано', all: st.hot ? 'Нет непрочитанных и свежее 2 часов — нажмите «Недавние» ещё раз' : '', waiting: 'Никто не ждёт ответа', archive: 'Архив пуст', tg: 'Разговоров с ботом нет', fav: isGrouped('fav') ? 'Избранных групп нет — наведите на группу и нажмите звёздочку' : 'Избранных чатов нет — наведите на чат и нажмите звёздочку', active: 'Активных нет: никто не работает, не ответил, и за сутки в чатах ничего не было и вы их не открывали' }[st.filter] || 'Чатов нет';
+      setList(`<div class="empty">${msg}</div>`);
       return;
     }
     const grouped = isGrouped(st.filter);
-    if (!grouped) { list.innerHTML = `<div class="card flat">${v.map((i) => row(i)).join('')}</div>`; return; }
+    if (!grouped) { setList(`<div class="card flat">${v.map((i) => row(i)).join('')}</div>`); return; }
 
     const groups = new Map();
     for (const i of v) { if (!groups.has(i.group)) groups.set(i.group, []); groups.get(i.group).push(i); }
     if (st.filter === 'all') for (const g of customGroups) if (!groups.has(g)) groups.set(g, []); // пустые свои группы — только во «Все»
     shownGroups = [...groups.keys()];
-    list.innerHTML = groupOrder(groups).map((g) => {
+    setList(groupOrder(groups).map((g) => {
       const arr = groups.get(g);
       const un = arr.filter((i) => i.status === 'unread').length;
       const work = arr.some((i) => i.status === 'working');
@@ -321,12 +373,13 @@
           <button class="ib gmore" data-gmore="1" title="Группа: порядок, переименовать, удалить">${ICON.more}</button>
         </div>
         <div class="gb">${arr.length ? arr.map((i) => row(i)).join('') : '<div class="gempty">Пусто. Перетащите сюда чат мышью — или «⋯» у чата → «Перенести в группу».</div>'}</div></div>`;
-    }).join('') + (st.filter === 'all' ? '<button class="addgroup" data-addgroup="1">＋ Новая группа</button>' : '');
+    }).join('') + (st.filter === 'all' ? '<button class="addgroup" data-addgroup="1">＋ Новая группа</button>' : ''));
   }
 
   // ---------- нажатия ----------
   document.addEventListener('click', (e) => {
     if (!e.target.closest('#agentsMenu') && !e.target.closest('#agentsBtn')) closeMenu();
+    if (!e.target.closest('#scopeMenu') && !e.target.closest('[data-scopebtn]')) $('scopeMenu').hidden = true;
     if (!e.target.closest('#sizeMenu') && !e.target.closest('#sizeBtn')) closeSizeMenu();
     if (e.target.closest('#sizeBtn')) { const m = $('sizeMenu'); m.hidden = !m.hidden; if (!m.hidden) renderSizeMenu(); return; }
     const zb = e.target.closest('[data-zm]');
@@ -363,6 +416,25 @@
     if (e.target.closest('[data-archclose]')) { st.filter = 'all'; save(); render(); return; }
     const gp = e.target.closest('[data-gplus]');
     if (gp) { vscode.postMessage({ type: 'new', agent: 'last', group: gp.closest('.gh').dataset.g }); return; }
+    if (e.target.closest('[data-scopebtn]')) { openScopeMenu(); return; }
+    const sp = e.target.closest('[data-scope]');
+    if (sp) {
+      const k = sp.dataset.scope;
+      if (k === 'all') st.scopes = { work: true, personal: true, none: true };
+      else if (!(st.scopes[k] && !['work', 'personal', 'none'].some((o) => o !== k && st.scopes[o]))) st.scopes[k] = !st.scopes[k]; // последнюю отметку не снять — иначе список пуст
+      save(); render(); return; // меню остаётся открытым, чтобы отметить несколько
+    }
+    if (e.target.closest('[data-waitmenu]')) { st.filter = st.filter === 'waiting' ? 'all' : 'waiting'; if (results) { q.value = ''; onSearch(); } closeMenu(); save(); render(); return; }
+    const sc = e.target.closest('[data-cscope]');
+    if (sc) {
+      e.stopPropagation();
+      const k = sc.closest('.chat').dataset.k, it = items.find((x) => x.key === k); if (!it) return;
+      // нет метки → рабочий → личный → (своя метка — вернуть по проекту; авто — рабочий)
+      const next = !it.scope ? 'work' : it.scope === 'work' ? 'personal' : it.scopeAuto ? 'work' : '';
+      vscode.postMessage({ type: 'scope', key: k, value: next });
+      items = items.map((x) => (x.key === k ? { ...x, scope: next || x.scope, scopeAuto: !next } : x)); // сразу на экране; при возврате метку по проекту уточнит расширение
+      render(); return;
+    }
     const cs = e.target.closest('[data-cstar]');
     if (cs) {
       const k = cs.closest('.chat').dataset.k, v = !favChats[k];

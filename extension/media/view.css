@@ -416,3 +416,35 @@ button.agentb svg.bico { display: block; }
 #dropov svg { width: 34px; height: 34px; color: var(--a3); }
 #dropov b { font-size: 14px; font-weight: 600; }
 #dropov span { color: var(--muted); font-size: 12px; }
+
+/* 0.9.46: личные / рабочие */
+.cscope { width: 16px; height: 16px; padding: 0; flex: none; opacity: .5; font-size: 9.5px; font-weight: 700; line-height: 14px; border-radius: 5px; border: 1px solid var(--gl-edge); color: var(--muted); transition: opacity .15s, transform .15s; }
+.chat:hover .cscope { opacity: .8; }
+.cscope:hover { opacity: 1 !important; transform: scale(1.1); }
+.cscope.sc-work, .cscope.sc-personal { opacity: .95; border-color: transparent; }
+.cscope.sc-work { background: rgba(10,132,255,.2); color: #5BA8FF; }
+.cscope.sc-personal { background: rgba(48,209,88,.18); color: #4FD27E; }
+.cscope.auto.sc-work, .cscope.auto.sc-personal { opacity: .55; }
+body.light .cscope.sc-work { background: rgba(10,132,255,.14); color: #0A6FDB; }
+body.light .cscope.sc-personal { background: rgba(31,138,70,.14); color: #1F8A46; }
+.pop .sc { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 5px; font-size: 9.5px; font-weight: 700; color: var(--muted); border: 1px solid var(--gl-edge); }
+.pop .sc.sc-work { background: rgba(10,132,255,.2); color: #5BA8FF; border-color: transparent; }
+.pop .sc.sc-personal { background: rgba(48,209,88,.18); color: #4FD27E; border-color: transparent; }
+body.light .pop .sc.sc-work { color: #0A6FDB; } body.light .pop .sc.sc-personal { color: #1F8A46; }
+.pop.scope { right: 10px; min-width: 190px; }
+.pop .mhint { padding: 6px 8px 4px; font-size: 11px; line-height: 1.35; color: var(--muted); max-width: 230px; }
+.tile.t-scope.set { background: transparent; border-color: var(--a3); color: var(--ink); }
+.tile.t-scope.set .ti { color: var(--a3); }
+body.light .tile.t-scope.set { border-color: #0A84FF; } body.light .tile.t-scope.set .ti { color: #0A84FF; }
+
+/* --- 0.9.49: рамка только при наведении, тонкая; на выбранных и при нажатии рамки нет --- */
+:root, body { --hov-ring: rgba(63,216,242,.4); --hov-fill: rgba(63,216,242,.06); }
+body.light { --hov-ring: rgba(0,0,0,.3); --hov-fill: rgba(0,0,0,.04); }
+.tile:hover:not(.on):not(:active), .chip:hover:not(.on):not(:disabled):not(:active), button.agentb:hover:not(.on):not(:active),
+.ib:hover:not(:disabled):not(.on):not(:active), .cstar:hover:not(.on):not(:active), .gstar:hover:not(.on):not(:active), .cscope:hover:not(:active) {
+  background: var(--hov-fill); box-shadow: inset 0 0 0 1px var(--hov-ring); border-color: transparent;
+}
+.ib:hover:not(:disabled):not(.on):not(:active), .cstar:hover:not(.on):not(:active), .gstar:hover:not(.on):not(:active), .cscope:hover:not(:active) { border-radius: 6px; }
+.archbar .ib:hover { background: rgba(255,255,255,.14); box-shadow: inset 0 0 0 1px rgba(255,255,255,.45); }
+body.light .archbar .ib:hover { background: rgba(0,0,0,.06); box-shadow: inset 0 0 0 1px rgba(0,0,0,.3); }
+button:focus:not(:focus-visible) { outline: none; }
